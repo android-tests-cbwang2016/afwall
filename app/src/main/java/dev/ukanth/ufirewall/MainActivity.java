@@ -36,7 +36,9 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences.Editor;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.net.wifi.WifiManager;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
@@ -52,6 +54,8 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
+
+import android.provider.Settings;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextUtils.TruncateAt;
@@ -79,6 +83,7 @@ import android.widget.Toast;
 import com.afollestad.materialdialogs.DialogAction;
 import com.afollestad.materialdialogs.MaterialDialog;
 import com.raizlabs.android.dbflow.config.FlowManager;
+import com.stericson.roottools.RootTools;
 
 import java.io.File;
 import java.lang.ref.WeakReference;
@@ -103,6 +108,7 @@ import dev.ukanth.ufirewall.preferences.PreferencesActivity;
 import dev.ukanth.ufirewall.profiles.ProfileData;
 import dev.ukanth.ufirewall.profiles.ProfileHelper;
 import dev.ukanth.ufirewall.service.FirewallService;
+import dev.ukanth.ufirewall.service.LogService;
 import dev.ukanth.ufirewall.service.RootCommand;
 import dev.ukanth.ufirewall.util.AppListArrayAdapter;
 import dev.ukanth.ufirewall.util.FileDialog;
@@ -113,6 +119,7 @@ import dev.ukanth.ufirewall.util.SecurityUtil;
 import eu.chainfire.libsuperuser.Shell;
 import haibison.android.lockpattern.utils.AlpSettings;
 
+import static dev.ukanth.ufirewall.util.G.TAG;
 import static dev.ukanth.ufirewall.util.G.ctx;
 import static dev.ukanth.ufirewall.util.G.isDonate;
 import static dev.ukanth.ufirewall.util.SecurityUtil.LOCK_VERIFICATION;
@@ -180,6 +187,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         super.onCreate(savedInstanceState);
 
         initTheme();
+        G.registerPrivateLink();
 
         try {
             final int FLAG_HARDWARE_ACCELERATED = WindowManager.LayoutParams.class
@@ -233,19 +241,15 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
             (new RootCheck()).setContext(this).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
         } else {
             //might not have rootshell
+
             startRootShell();
             new SecurityUtil(MainActivity.this).passCheck();
             registerNetworkObserver();
         }
-        //registerQuickApply();
         registerUIbroadcast4();
         registerUIbroadcast6();
-
         registerToastbroadcast();
-        migrateNotification();
         initTextWatcher();
-        //registerLogService();
-        //checkAndAskForBatteryOptimization();
         registerThemeIntent();
         registerUIRefresh();
     }
@@ -259,14 +263,13 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         selectedColumns = G.enableTor() ?  selectedColumns + 1 : selectedColumns;
     }
 
-    /*private void registerLogService() {
+    private void registerLogService() {
         if (G.enableLogService()) {
             Log.i(G.TAG, "Starting Log Service");
             final Intent logIntent = new Intent(getBaseContext(), LogService.class);
             startService(logIntent);
-            G.storedPid(new HashSet());
         }
-    }*/
+    }
 
     private void  registerUIRefresh(){
         IntentFilter filter = new IntentFilter("dev.ukanth.ufirewall.ui.CHECKREFRESH");
@@ -274,11 +277,12 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
             @Override
             public void onReceive(Context context, Intent intent) {
                 updateSelectedColumns();
-
                 if(selectedColumns <= DEFAULT_VIEW_LIMIT && currentUI == 1) {
                     recreate();
                 }
                 else if(selectedColumns > DEFAULT_VIEW_LIMIT && currentUI == 0){
+                    recreate();
+                } else{
                     recreate();
                 }
             }
@@ -363,6 +367,10 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
 
     private void registerNetworkObserver() {
         startService(new Intent(getBaseContext(), FirewallService.class));
+        //start log service
+        if(G.enableLogService()) {
+            startService(new Intent(getBaseContext(), LogService.class));
+        }
     }
 
     @Override
@@ -380,7 +388,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
     }
 
 
-    private void migrateNotification() {
+    /*private void migrateNotification() {
         try {
             if (!G.isNotificationMigrated()) {
                 List<Integer> idList = G.getBlockedNotifyList();
@@ -396,8 +404,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         } catch (Exception e) {
             Log.e(G.TAG, "Unable to migrate notification", e);
         }
-
-    }
+    }*/
 
 
     private void registerToastbroadcast() {
@@ -573,6 +580,8 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                         }
                     }
                 }).run(getApplicationContext(), cmds);
+        //check if log targets support
+        probeLogTarget();
     }
 
     private void showRootNotFoundMessage() {
@@ -1222,19 +1231,37 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 }
                 return true;
             case R.id.menu_import:
-                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
-                        != PackageManager.PERMISSION_GRANTED) {
-                    // permissions have not been granted.
-                    ActivityCompat.requestPermissions(MainActivity.this,
-                            new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
-                            MY_PERMISSIONS_REQUEST_READ_STORAGE);
-
-                } else {
+                if(Build.VERSION.SDK_INT  >= Build.VERSION_CODES.Q ){
+                    // Do some stuff
+                    copyOldExportedData();
                     showImportDialog();
+                } else {
+                    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+                            != PackageManager.PERMISSION_GRANTED) {
+                        // permissions have not been granted.
+                        ActivityCompat.requestPermissions(MainActivity.this,
+                                new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
+                                MY_PERMISSIONS_REQUEST_READ_STORAGE);
+
+                    } else {
+                        showImportDialog();
+                    }
                 }
                 return true;
             default:
                 return super.onOptionsItemSelected(item);
+        }
+    }
+
+    private void copyOldExportedData() {
+        if(!G.hasCopyOld()) {
+            //using root to copy existing data to current directory on A11
+            String existingDir = Environment.getExternalStorageDirectory() + "//afwall//";
+            String targetDir = ctx.getExternalFilesDir(null) + "/";
+            String command = "cp -R " + existingDir + " " + targetDir;
+            Log.i(TAG, "Invoking migration script " + command);
+            com.topjohnwu.superuser.Shell.Result result = com.topjohnwu.superuser.Shell.su(command).exec();
+            G.hasCopyOldExports(true);
         }
     }
 
@@ -1272,8 +1299,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 .cancelable(false)
                 .items(new String[]{
                         getString(R.string.import_rules),
-                        getString(R.string.import_all),
-                        getString(R.string.import_rules_droidwall)})
+                        getString(R.string.import_all)})
                 .itemsCallbackSingleChoice(-1, (dialog, view, which, text) -> {
                     switch (which) {
                         case 0:
@@ -1289,7 +1315,8 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
 
                             //fileDialog.setFlag(true);
                             //fileDialog.setFileEndsWith(new String[] {"backup", "afwall-backup"}, "all");
-                            fileDialog.addFileListener((FileDialog.FileSelectedListener) file -> {
+                            fileDialog.addFileListener(file -> {
+
                                 String fileSelected = file.toString();
                                 StringBuilder builder = new StringBuilder();
                                 if (Api.loadSharedPreferencesFromFile(MainActivity.this, builder, fileSelected, false)) {
@@ -1340,37 +1367,6 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                                 Api.donateDialog(MainActivity.this, false);
                             }
                             break;
-                        case 2:
-
-                            new MaterialDialog.Builder(MainActivity.this).cancelable(false)
-                                    .title(R.string.import_rules_droidwall)
-                                    .content(R.string.overrideRules)
-                                    .positiveText(R.string.Yes)
-                                    .negativeText(R.string.No)
-                                    .icon(getResources().getDrawable(R.drawable.ic_launcher))
-                                    .onPositive(new MaterialDialog.SingleButtonCallback() {
-                                        @Override
-                                        public void onClick(@NonNull MaterialDialog dialog, @NonNull DialogAction which) {
-                                            if (ImportApi.loadSharedPreferencesFromDroidWall(MainActivity.this)) {
-                                                Api.applications = null;
-                                                showOrLoadApplications();
-                                                Api.toast(MainActivity.this, getString(R.string.import_rules_success) + Environment.getExternalStorageDirectory().getAbsolutePath() + "/afwall/");
-                                            } else {
-                                                Api.toast(MainActivity.this, getString(R.string.import_rules_fail));
-                                            }
-                                        }
-                                    })
-
-                                    .onNegative(new MaterialDialog.SingleButtonCallback() {
-                                        @Override
-                                        public void onClick(@NonNull MaterialDialog dialog, @NonNull DialogAction which) {
-                                            dialog.cancel();
-                                        }
-                                    })
-                                    .show();
-
-
-                            break;
                     }
                     return true;
                 })
@@ -1415,6 +1411,8 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
     @Override
     public void onRequestPermissionsResult(int requestCode,
                                            String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
         switch (requestCode) {
             case MY_PERMISSIONS_REQUEST_WRITE_STORAGE: {
                 if (grantResults.length > 0
@@ -1454,13 +1452,10 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 .title(R.string.confirmMsg)
                 //.content(R.string.confirmMsg)
                 .cancelable(false)
-                .onPositive(new MaterialDialog.SingleButtonCallback() {
-                    @Override
-                    public void onClick(@NonNull MaterialDialog dialog, @NonNull DialogAction which) {
-                        purgeRules();
-                        Api.updateNotification(Api.isEnabled(getApplicationContext()), getApplicationContext());
-                        dialog.dismiss();
-                    }
+                .onPositive((dialog, which) -> {
+                    purgeRules();
+                    Api.updateNotification(Api.isEnabled(getApplicationContext()), getApplicationContext());
+                    dialog.dismiss();
                 })
                 .onNegative((dialog, which) -> {
                     Api.setEnabled(getApplicationContext(), true, true);
@@ -1524,18 +1519,6 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                     case RESULT_OK:
                         //isPassVerify = true;
                         showOrLoadApplications();
-                        break;
-                    case RESULT_CANCELED:
-                        MainActivity.this.finish();
-                        android.os.Process.killProcess(android.os.Process.myPid());
-                        break;
-                    case RESULT_FAILED:
-                        MainActivity.this.finish();
-                        android.os.Process.killProcess(android.os.Process.myPid());
-                        break;
-                    case RESULT_FORGOT_PATTERN:
-                        MainActivity.this.finish();
-                        android.os.Process.killProcess(android.os.Process.myPid());
                         break;
                     default:
                         MainActivity.this.finish();
@@ -1642,44 +1625,17 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
     public void onClick(View v) {
 
         switch (v.getId()) {
-            /*case R.id.label_mode:
-                selectMode();
-				break;*/
             case R.id.img_wifi:
-                selectActionConfirmation(v.getId());
-                break;
             case R.id.img_3g:
-                selectActionConfirmation(v.getId());
-                break;
             case R.id.img_roam:
-                selectActionConfirmation(v.getId());
-                break;
             case R.id.img_vpn:
-                selectActionConfirmation(v.getId());
-                break;
             case R.id.img_tether:
-                selectActionConfirmation(v.getId());
-                break;
             case R.id.img_lan:
-                selectActionConfirmation(v.getId());
-                break;
             case R.id.img_tor:
                 selectActionConfirmation(v.getId());
                 break;
-            /*case R.id.img_invert:
-                selectActionConfirmation(getString(R.string.reverse_all), v.getId());
-                break;
-            case R.id.img_clone:
-                cloneColumn(getString(R.string.legend_clone), v.getId());
-                break;
-            case R.id.img_reset:
-                selectActionConfirmation(getString(R.string.unselect_all), v.getId());
-                break;*/
             case R.id.img_action:
                 selectAction();
-                //case R.id.img_invert:
-                //	revertApplications();
-                //	break;
         }
     }
 
@@ -2601,7 +2557,6 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                             }
                         });
                 Api.applySavedIptablesRules(activityReference.get(), true, rootCommand4);
-                probeLogTarget();
                 return true;
             } else {
                 runOnUiThread(() -> {
@@ -2704,6 +2659,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 G.hasRoot(true);
                 startRootShell();
                 new SecurityUtil(MainActivity.this).passCheck();
+                registerNetworkObserver();
             }
         }
     }
@@ -2720,5 +2676,6 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
             return this.mCompatListener.onUnhandledKeyEvent(v, event);
         }
     }
+
 }
 

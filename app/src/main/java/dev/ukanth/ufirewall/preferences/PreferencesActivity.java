@@ -47,6 +47,7 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
+import android.widget.Toast;
 
 import java.util.List;
 
@@ -133,9 +134,9 @@ public class PreferencesActivity extends PreferenceActivity implements SharedPre
         disposable = rxEvent.subscribe(event -> {
             if (event instanceof RulesEvent) {
                 ruleChangeApplyRules((RulesEvent) event);
-            } else if (event instanceof LogChangeEvent) {
+            } /*else if (event instanceof LogChangeEvent) {
                 logDmesgChangeApplyRules((LogChangeEvent) event);
-            }
+            }*/
         });
     }
 
@@ -279,7 +280,7 @@ public class PreferencesActivity extends PreferenceActivity implements SharedPre
         return isXLargeTablet(this) && !isSimplePreferences(this);
     }
 
-    public void logDmesgChangeApplyRules(LogChangeEvent logChangeEvent) {
+    /*public void logDmesgChangeApplyRules(LogChangeEvent logChangeEvent) {
         if (logChangeEvent != null) {
             final Context context = logChangeEvent.ctx;
             final Intent logIntent = new Intent(context, LogService.class);
@@ -294,8 +295,7 @@ public class PreferencesActivity extends PreferenceActivity implements SharedPre
                 Api.cleanupUid();
             }
         }
-
-    }
+    }*/
 
     @Override
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
@@ -310,13 +310,13 @@ public class PreferencesActivity extends PreferenceActivity implements SharedPre
             isRefreshRequired = true;
         }
 
-        if (key.equals("ip_path") || key.equals("dns_value")) {
+        if (key.equals("ipt_path") || key.equals("dns_value")) {
             rxEvent.publish(new RulesEvent("", ctx));
         }
 
-        if (key.equals("logDmesg")) {
+        /*if (key.equals("logDmesg")) {
             rxEvent.publish(new LogChangeEvent("", ctx));
-        }
+        }*/
 
         if (key.equals("notification_priority")) {
             NotificationManager notificationManager = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -341,22 +341,23 @@ public class PreferencesActivity extends PreferenceActivity implements SharedPre
                     .setFailureToast(R.string.log_target_fail));
             Intent intent = new Intent(ctx, LogService.class);
             ctx.stopService(intent);
-            Api.cleanupUid();
             ctx.startService(intent);
         }
         if (key.equals("enableLogService")) {
-            boolean enabled = sharedPreferences.getBoolean(key, false);
-            if (enabled) {
-                //Api.setLogTarget(ctx, true);
-                Intent intent = new Intent(ctx, LogService.class);
-                ctx.stopService(intent);
-                Api.cleanupUid();
-                ctx.startService(intent);
-            } else {
-                //Api.setLogTarget(ctx, false);
-                Intent intent = new Intent(ctx, LogService.class);
-                ctx.stopService(intent);
-                Api.cleanupUid();
+            if(G.logTarget() !=null && !G.logTarget().trim().isEmpty()) {
+                boolean enabled = sharedPreferences.getBoolean(key, false);
+                if (enabled) {
+                    Toast.makeText(getApplicationContext(), getString(R.string.log_service_start), Toast.LENGTH_LONG).show();
+                    Intent intent = new Intent(ctx, LogService.class);
+                    ctx.stopService(intent);
+                    ctx.startService(intent);
+                } else {
+                    Toast.makeText(getApplicationContext(), getString(R.string.log_service_stop), Toast.LENGTH_LONG).show();
+                    Intent intent = new Intent(ctx, LogService.class);
+                    ctx.stopService(intent);
+                }
+            } else{
+                Toast.makeText(getApplicationContext(), getString(R.string.log_service_select), Toast.LENGTH_LONG).show();
             }
         }
         if (key.equals("enableMultiProfile")) {

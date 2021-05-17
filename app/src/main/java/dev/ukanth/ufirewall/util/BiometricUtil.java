@@ -1,10 +1,10 @@
 package dev.ukanth.ufirewall.util;
 
 /**
- * This file was created to simplify Fingerprint APIs and made specifically for (AFWall+) application.
+ * This file was created to simplify Biometric APIs and made specifically for (AFWall+) application.
  * You are free to re-distributed this file anywhere you like. :)
  * ----------------------------------------------
- * Created by vzool on 1/20/17.
+ * Created by ukanth
  */
 
 import android.Manifest;
@@ -15,6 +15,8 @@ import android.app.KeyguardManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Point;
+import android.hardware.biometrics.BiometricManager;
+import android.hardware.biometrics.BiometricPrompt;
 import android.hardware.fingerprint.FingerprintManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -22,11 +24,12 @@ import android.os.CancellationSignal;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyPermanentlyInvalidatedException;
 import android.security.keystore.KeyProperties;
+import android.view.WindowManager;
+import android.widget.TextView;
+
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.core.app.ActivityCompat;
-import android.view.WindowManager;
-import android.widget.TextView;
 
 import java.io.IOException;
 import java.security.InvalidAlgorithmParameterException;
@@ -48,21 +51,25 @@ import dev.ukanth.ufirewall.Api;
 import dev.ukanth.ufirewall.R;
 import dev.ukanth.ufirewall.log.Log;
 
+import static android.content.Context.BIOMETRIC_SERVICE;
 import static android.content.Context.FINGERPRINT_SERVICE;
 import static android.content.Context.KEYGUARD_SERVICE;
+import static android.hardware.biometrics.BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE;
+import static android.hardware.biometrics.BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED;
+import static android.hardware.biometrics.BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE;
 
-public class FingerprintUtil {
+public class BiometricUtil {
 
-    final static String TAG = "AfWall-FingerprintUtil";
+    final static String TAG = "AfWall-BiometricUtil";
 
     // generate key based on pkg name
     public static String GetKey(Context context){
-        return Api.getCurrentPackage(context) + ":Fingerprint";
+        return Api.getCurrentPackage(context) + ":Biometric";
     }
 
     // safely check if device support fingerprint
     public static boolean isAndroidSupport(){
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
     }
 
     /*
@@ -79,23 +86,23 @@ public class FingerprintUtil {
         boolean isNotFirstWindowFocus = false;
 
         KeyguardManager keyguardManager;
-        FingerprintManager fingerprintManager;
+        BiometricManager biometricManager;
 
-        FingerprintHandler helper;
+        BiometricHandler helper;
 
-        FingerprintManager.CryptoObject cryptoObject;
+        BiometricPrompt.CryptoObject cryptoObject;
 
         // callbacks
         OnFingerprintFailure failureCallback;
         OnFingerprintSuccess successCallback;
 
-        @RequiresApi(api = Build.VERSION_CODES.M)
+        @RequiresApi(api = Build.VERSION_CODES.Q)
         public FingerprintDialog(Context context) {
             super(context);
 
             // Initializing both Android Keyguard Manager and Fingerprint Manager
             keyguardManager = (KeyguardManager) getContext().getSystemService(KEYGUARD_SERVICE);
-            fingerprintManager = (FingerprintManager) getContext().getSystemService(FINGERPRINT_SERVICE);
+            biometricManager = (BiometricManager) getContext().getSystemService(BIOMETRIC_SERVICE);
         }
 
         @Override
@@ -132,7 +139,7 @@ public class FingerprintUtil {
                 getWindow().setAttributes(lp);
 
             }catch (NullPointerException ex){
-                
+
                 Log.e(TAG, ex.getMessage());
             }
         }
@@ -189,11 +196,11 @@ public class FingerprintUtil {
          * Created by whit3hawks on 11/16/16.
          * Modified by vzool on 1/14/17.
          */
-        @TargetApi(Build.VERSION_CODES.M)
+        @TargetApi(Build.VERSION_CODES.Q)
         void startReadFingerTip(){
 
             // Check whether the device has a Fingerprint sensor.
-            if(!fingerprintManager.isHardwareDetected()){
+            if(biometricManager.canAuthenticate() == BIOMETRIC_ERROR_NO_HARDWARE){
                 /**
                  * This block will not be touched unless weird things happened,
                  * because we already checked if device support fingerprint before enable it.
@@ -206,26 +213,20 @@ public class FingerprintUtil {
                     errorText.setText(R.string.fingerprint_permission_manifest_missing);
                 }else{
                     // Check whether at least one fingerprint is registered
-                    if (!fingerprintManager.hasEnrolledFingerprints()) {
+                    if (biometricManager.canAuthenticate() == BIOMETRIC_ERROR_NONE_ENROLLED) {
                         errorText.setText(R.string.register_at_least_one_fingerprint);
                     }else{
                         // Checks whether lock screen security is enabled or not
                         if (!keyguardManager.isKeyguardSecure()) {
                             errorText.setText(R.string.lock_screen_not_enabled);
                         }else{
-
                             generateKey();
-
                             if (cipherInit()) {
-
-                                cryptoObject = new FingerprintManager.CryptoObject(cipher);
-
+                                cryptoObject = new BiometricPrompt.CryptoObject(cipher);
                                 if(helper == null){
-
-                                    helper = new FingerprintHandler();
+                                    helper = new BiometricHandler();
                                 }
-
-                                helper.startAuth(fingerprintManager, cryptoObject);
+                                helper.startAuth(biometricManager, cryptoObject);
                             }
                         }
                     }
@@ -233,7 +234,7 @@ public class FingerprintUtil {
             }
         }
 
-        @TargetApi(Build.VERSION_CODES.M)
+        @TargetApi(Build.VERSION_CODES.Q)
         void stopReadFingerTip(){
 
             if(helper != null){
@@ -251,7 +252,7 @@ public class FingerprintUtil {
             }
         }
 
-        @TargetApi(Build.VERSION_CODES.M)
+        @TargetApi(Build.VERSION_CODES.Q)
         private void generateKey() {
             try {
                 keyStore = KeyStore.getInstance("AndroidKeyStore");
@@ -287,7 +288,7 @@ public class FingerprintUtil {
             }
         }
 
-        @TargetApi(Build.VERSION_CODES.M)
+        @TargetApi(Build.VERSION_CODES.Q)
         private boolean cipherInit() {
             try {
                 cipher = Cipher.getInstance(KeyProperties.KEY_ALGORITHM_AES + "/" + KeyProperties.BLOCK_MODE_CBC + "/" + KeyProperties.ENCRYPTION_PADDING_PKCS7);
@@ -313,21 +314,21 @@ public class FingerprintUtil {
          * Created by whit3hawks on 11/16/16.
          * Modified by vzool on 1/14/17.
          */
-        @RequiresApi(api = Build.VERSION_CODES.M)
-        private class FingerprintHandler extends FingerprintManager.AuthenticationCallback {
+        @RequiresApi(api = Build.VERSION_CODES.Q)
+        private class BiometricHandler extends BiometricPrompt.AuthenticationCallback {
 
             CancellationSignal cancellationSignal;
 
-            FingerprintHandler(){
+            BiometricHandler(){
                 cancellationSignal = new CancellationSignal();
             }
 
-            private void startAuth(FingerprintManager manager, FingerprintManager.CryptoObject cryptoObject) {
+            private void startAuth(BiometricManager manager, BiometricPrompt.CryptoObject cryptoObject) {
 
-                if (ActivityCompat.checkSelfPermission(getContext(), Manifest.permission.USE_FINGERPRINT) != PackageManager.PERMISSION_GRANTED) {
+                if (ActivityCompat.checkSelfPermission(getContext(), Manifest.permission.USE_BIOMETRIC) != PackageManager.PERMISSION_GRANTED) {
                     return;
                 }
-                manager.authenticate(cryptoObject, cancellationSignal, 0, this, null);
+                //manager.(cryptoObject, cancellationSignal, 0, this, null);
             }
 
             private void stopAuth(){
@@ -367,7 +368,7 @@ public class FingerprintUtil {
 
 
             @Override
-            public void onAuthenticationSucceeded(FingerprintManager.AuthenticationResult result) {
+            public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
                 this.update(getContext().getString(R.string.fingerprint_authentication_successded), true);
             }
 

@@ -32,7 +32,7 @@
 
     <!-- Allows ufwall to write to external storage -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="29" />
+        android:maxSdkVersion="28" />
 
     <!-- Allows access to IP configuration and tethering state -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -44,8 +44,12 @@
 
     <!-- Allows ufwall to access information about Fingerprint -->
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
-   <uses-permission
+
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission"/>
+
+    <uses-permission
        android:name="android.permission.FOREGROUND_SERVICE"/>
 
     <!-- Screen support -->
@@ -83,12 +87,6 @@
             android:name="xposedminversion"
             android:value="53" />
 
-        <meta-data
-            android:name="xposedsharedprefs"
-            android:value="true" />
-        <meta-data
-            android:name="xposedscope"
-            android:resource="@array/module_scope" />
 
         <!-- donate  android:label="@string/app_name_donate" -->
         <activity
@@ -110,7 +108,7 @@
         <activity
             android:name=".preferences.PreferencesActivity"
             android:theme="@style/AppDarkTheme"
-            android:configChanges="orientation|keyboardHidden|locale|screenLayout"
+            android:configChanges="orientation|keyboardHidden|screenSize|keyboard|locale|screenLayout"
             android:hardwareAccelerated="true">
             <meta-data
                 android:name="android.support.PARENT_ACTIVITY"
@@ -122,29 +120,29 @@
             android:hardwareAccelerated="true"></activity>
         <activity
             android:name=".activity.RulesActivity"
-            android:configChanges="orientation|keyboardHidden|locale|screenLayout"></activity>
+            android:configChanges="orientation|keyboardHidden|screenSize|keyboard|locale|screenLayout"></activity>
         <activity
             android:name=".activity.ProfileActivity"
-            android:configChanges="orientation|keyboardHidden|locale|screenLayout"></activity>
+            android:configChanges="orientation|keyboardHidden|screenSize|keyboard|locale|screenLayout"></activity>
         <activity
             android:name=".activity.AppDetailActivity"
-            android:configChanges="orientation|keyboardHidden|locale|screenLayout">
+            android:configChanges="orientation|keyboardHidden|screenSize|keyboard|locale|screenLayout">
             <meta-data
                 android:name="android.support.PARENT_ACTIVITY"
                 android:value="dev.ukanth.ufirewall.MainActivity" />
         </activity>
         <activity
             android:name=".activity.LogActivity"
-            android:configChanges="orientation|keyboardHidden|locale|screenLayout"></activity>
+            android:configChanges="orientation|keyboardHidden|screenSize|keyboard|locale|screenLayout"></activity>
         <activity
             android:name=".activity.OldLogActivity"
-            android:configChanges="orientation|keyboardHidden|locale|screenLayout"></activity>
+            android:configChanges="orientation|keyboardHidden|screenSize|keyboard|locale|screenLayout"></activity>
         <activity
             android:name=".activity.LogDetailActivity"
-            android:configChanges="orientation|keyboardHidden|locale|screenLayout"></activity>
+            android:configChanges="orientation|keyboardHidden|screenSize|keyboard|locale|screenLayout"></activity>
         <activity
             android:name=".activity.DataDumpActivity"
-            android:configChanges="orientation|keyboardHidden|locale|screenLayout">
+            android:configChanges="orientation|keyboardHidden|screenSize|keyboard|locale|screenLayout">
             <meta-data
                 android:name="android.support.PARENT_ACTIVITY"
                 android:value="dev.ukanth.ufirewall.MainActivity" />
@@ -170,7 +168,7 @@
         </activity>
         <activity
             android:name=".activity.CustomScriptActivity"
-            android:configChanges="orientation|keyboardHidden|locale|screenLayout">
+            android:configChanges="orientation|keyboardHidden|screenSize|keyboard|locale|screenLayout">
             <meta-data
                 android:name="android.support.PARENT_ACTIVITY"
                 android:value="dev.ukanth.ufirewall.MainActivity" />
@@ -307,6 +305,7 @@
             android:exported="false" />
         <service
             android:name=".service.LogService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
             android:enabled="true"
             android:label="AFWallLogService" />
 

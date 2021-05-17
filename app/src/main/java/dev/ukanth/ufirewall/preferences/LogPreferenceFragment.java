@@ -38,8 +38,8 @@ public class LogPreferenceFragment extends PreferenceFragment {
             //fix for the mess
             //G.logPingTimeout(G.logPingTimeout());
             addPreferencesFromResource(R.xml.log_preferences);
-            populateLogMessage(findPreference("logDmesg"));
-            populateAppList(findPreference("block_filter"));
+          //  populateLogMessage(findPreference("logDmesg"));
+           // populateAppList(findPreference("block_filter"));
             setupLogHostname(findPreference("showHostName"));
             populateLogTarget(findPreference("logTarget"));
         } catch (ClassCastException c) {
@@ -60,10 +60,16 @@ public class LogPreferenceFragment extends PreferenceFragment {
                     listPreference.setEntries(items);
                     listPreference.setEntryValues(items);
                 }
+                //if there is only one entry
+                if(items.length == 1) {
+                    G.logTarget(items[0]);
+                }
             } else {
+                //no LOG targets
                 ((PreferenceGroup) findPreference("logExperimental")).removePreference(listPreference);
             }
         } else{
+            //no LOG targets
             ((PreferenceGroup) findPreference("logExperimental")).removePreference(listPreference);
         }
     }
@@ -78,7 +84,7 @@ public class LogPreferenceFragment extends PreferenceFragment {
         }*/
     }
 
-    private void populateLogMessage(Preference logDmesg) {
+    /*private void populateLogMessage(Preference logDmesg) {
         if (logDmesg == null) {
             return;
         }
@@ -106,17 +112,11 @@ public class LogPreferenceFragment extends PreferenceFragment {
             ret[i] = iterator.next().intValue();
         }
         return ret;
-    }
+    }*/
 
-    private void populateAppList(Preference list) {
+    /*private void populateAppList(Preference list) {
         final ArrayList<CharSequence> entriesList = new ArrayList<CharSequence>();
         final ArrayList<Integer> entryValuesList = new ArrayList<Integer>();
-
-            /*if (Api.applications == null) {
-                apps = Api.getApps(getActivity(), null);
-            } else {
-                apps = Api.applications;
-            }*/
 
         List<Api.PackageInfoData> apps = new ArrayList<>();
         //List<Api.PackageInfoData> apps = Api.getSpecialData(true);
@@ -132,11 +132,7 @@ public class LogPreferenceFragment extends PreferenceFragment {
         if (!apps.contains(info)) {
             apps.add(info);
         }
-       /* try {
-            Collections.sort(apps, new PackageComparator());
-        } catch (Exception e) {
-            Log.e(Api.TAG, "Exception on Sort " + e.getMessage());
-        }*/
+
         for (int i = 0; i < apps.size(); i++) {
             entriesList.add(apps.get(i).toStringWithUID());
             entryValuesList.add(apps.get(i).uid);
@@ -176,5 +172,5 @@ public class LogPreferenceFragment extends PreferenceFragment {
             }
         }
         return items.toArray(new Integer[0]);
-    }
+    }*/
 }

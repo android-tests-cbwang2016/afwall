@@ -22,76 +22,92 @@
 
 package dev.ukanth.ufirewall.service;
 
+import android.annotation.SuppressLint;
 import android.app.AlarmManager;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.drawable.AdaptiveIconDrawable;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.Icon;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.TaskStackBuilder;
+import androidx.core.graphics.drawable.IconCompat;
 
-import android.view.Gravity;
+import android.os.Looper;
+import android.os.SystemClock;
+import android.provider.Settings;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.widget.TextView;
+import android.widget.CheckBox;
 import android.widget.Toast;
 
 import com.raizlabs.android.dbflow.config.FlowConfig;
 import com.raizlabs.android.dbflow.config.FlowManager;
-import com.stericson.roottools.RootTools;
+import com.raizlabs.android.dbflow.sql.language.SQLite;
+import com.topjohnwu.superuser.CallbackList;
+import com.topjohnwu.superuser.Shell;
 
-import java.util.HashSet;
-import java.util.Set;
+
+import org.ocpsoft.prettytime.PrettyTime;
+import org.ocpsoft.prettytime.TimeUnit;
+import org.ocpsoft.prettytime.units.JustNow;
+import org.slf4j.helpers.Util;
+
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 import dev.ukanth.ufirewall.Api;
+
+import dev.ukanth.ufirewall.BuildConfig;
+import dev.ukanth.ufirewall.MainActivity;
 import dev.ukanth.ufirewall.R;
+import dev.ukanth.ufirewall.activity.LogActivity;
 import dev.ukanth.ufirewall.events.LogEvent;
 import dev.ukanth.ufirewall.log.Log;
 import dev.ukanth.ufirewall.log.LogData;
 import dev.ukanth.ufirewall.log.LogDatabase;
 import dev.ukanth.ufirewall.log.LogInfo;
-import dev.ukanth.ufirewall.log.LogRxEvent;
+import dev.ukanth.ufirewall.log.LogPreference;
+import dev.ukanth.ufirewall.log.LogPreference_Table;
 import dev.ukanth.ufirewall.util.G;
-import eu.chainfire.libsuperuser.Shell;
-import io.reactivex.rxjava3.disposables.Disposable;
 
 import static dev.ukanth.ufirewall.util.G.ctx;
 
 public class LogService extends Service {
 
-    /*static {
-        System.loadLibrary("native-lib");
-    }*/
-
     public static final String TAG = "AFWall";
-
     public static String logPath;
-
-    private Shell.Interactive rootSession;
-    static Handler handler;
-
     public static final int QUEUE_NUM = 40;
 
-    private Toast toast;
-    private TextView toastTextView;
-    private CharSequence toastText;
-    private int toastDuration;
-    private int toastDefaultYOffset;
-    private int toastYOffset;
+    private String NOTIFICATION_CHANNEL_ID = "firewall.logservice";
 
-    private Runnable showOnlyToastRunnable;
-    private CancelableRunnable showToastRunnable;
-    private View toastLayout;
 
-    private Disposable disposable;
-    private final int BUFF_LEN = 2000;
+    private  NotificationManager manager;
+    private  NotificationCompat.Builder notificationBuilder;
 
-    private static abstract class CancelableRunnable implements Runnable {
-        public boolean cancel;
-    }
+    private List<String> callbackList;
+    private ExecutorService executorService;
 
     //public native String stringFromLog();
 
@@ -101,75 +117,9 @@ public class LogService extends Service {
         return null;
     }
 
-    public void showToast(final Context context, final Handler handler, final CharSequence text, boolean cancel) {
-        if (showToastRunnable == null) {
-            showToastRunnable = new CancelableRunnable() {
-                public void run() {
-                    if (cancel && toast != null) {
-                        toast.cancel();
-                    }
-                    if (cancel || toast == null) {
-                        toastLayout = ((LayoutInflater) context.getSystemService(LAYOUT_INFLATER_SERVICE)).inflate(R.layout.custom_toast, null);
-                        toastTextView = toastLayout.findViewById(R.id.toasttext);
-                        if (toast == null) {
-                            toast = new Toast(context);
-                        }
-                        toastDefaultYOffset = toast.getYOffset();
-                        toast.setView(toastLayout);
-                    }
-
-                    //Fix for many crashes in android 28
-                    if (Build.VERSION_CODES.P >= 28 && toast.getView().isShown()) {
-                        toast.cancel();
-                    }
-
-                    switch (toastDuration) {
-                        case 3500:
-                            toast.setDuration(Toast.LENGTH_LONG);
-                            break;
-                        case 7000:
-                            toast.setDuration(Toast.LENGTH_LONG);
-                            if (showOnlyToastRunnable == null) {
-                                showOnlyToastRunnable = () -> toast.show();
-                            }
-                            handler.postDelayed(showOnlyToastRunnable, 3250);
-                            break;
-                        default:
-                            toast.setDuration(Toast.LENGTH_SHORT);
-                    }
-
-                    switch (G.toast_pos()) {
-                        case "top":
-                            toast.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, toastYOffset);
-                            break;
-                        case "bottom":
-                            toast.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM, 0, toastYOffset);
-                            break;
-                        case "center":
-                            toast.setGravity(Gravity.CENTER, 0, 0);
-                            break;
-                        default:
-                            toast.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM, 0, toastDefaultYOffset);
-                            break;
-                    }
-
-                    toastTextView.setText(android.text.Html.fromHtml(toastText.toString()));
-                    toast.show();
-                }
-            };
-        }
-
-        showToastRunnable.cancel = cancel;
-        toastText = text;
-        handler.post(showToastRunnable);
-    }
-
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent == null) {
-            Log.i(TAG, "Restarting LogService");
-            startLogService();
-        }
+        startLogService();
         return START_STICKY;
     }
 
@@ -177,178 +127,200 @@ public class LogService extends Service {
     @Override
     public void onCreate() {
         startLogService();
-        //Toast.makeText(getApplicationContext(), stringFromLog(), Toast.LENGTH_LONG).show();
-
     }
 
-    /*private static class LogTask extends AsyncTask<Void, Void, Void> {
-        private LogEvent event;
-
-        private LogTask(LogEvent event) {
-            this.event = event;
-        }
-
-        @Override
-        protected Void doInBackground(Void... voids) {
-            store(event.logInfo, event.ctx);
-            return null;
-        }
-
-        @Override
-        protected void onPostExecute(Void a) {
-            if (event != null && event.logInfo.uidString != null && event.logInfo.uidString.length() > 0) {
-                if (G.showLogToasts() && G.canShow(event.logInfo.uid)) {
-                    showToast(event.ctx, handler, event.logInfo.uidString, false);
-                }
-            }
-        }
-    }*/
 
     private void startLogService() {
-        if (disposable != null) {
-            disposable.dispose();
-        }
-        disposable = LogRxEvent.subscribe((event -> {
-                    if (event != null) {
-                        try {
-                            new Thread(() -> {
-                                store(event.logInfo, event.ctx);
-                                if (event != null && event.logInfo != null && event.logInfo.uidString != null && event.logInfo.uidString.length() > 0) {
-                                    if (G.showLogToasts() && G.canShow(event.logInfo.uid)) {
-                                        showToast(event.ctx, handler, event.logInfo.uidString, false);
-                                    }
-                                }
-                            }).start();
-                        } catch (Exception e) {
-                        }
-                    }
-                })
-        );
         if (G.enableLogService()) {
             // this method is executed in a background thread
             // no problem calling su here
-            if (G.logTarget() != null && G.logTarget().length() > 1) {
-                if (G.logDmsg().isEmpty()) {
-                    G.logDmsg("OS");
+            String log = G.logTarget();
+            if (log != null) {
+                log = log.trim();
+                if(log.isEmpty()) {
+                    Toast.makeText(getApplicationContext(), "Please select log target first", Toast.LENGTH_LONG).show();
+                    return;
                 }
-                switch (G.logTarget()) {
+                switch (log) {
                     case "LOG":
-                        switch (G.logDmsg()) {
-                            case "OS":
-                                logPath = "echo PID=$$ & while true; do dmesg -c ; sleep 1 ; done";
-                                break;
-                            case "BX":
-                                if (RootTools.isBusyboxAvailable()) {
-                                    logPath = "echo PID=$$ & while true; do busybox dmesg -c ; sleep 1 ; done";
-                                } else {
-                                    logPath = "echo PID=$$ & while true; do " + Api.getBusyBoxPath(ctx, false) + " dmesg -c ; sleep 1 ; done";
-                                }
-                                break;
-                            default:
-                                logPath = "echo PID=$$ & while true; do dmesg -c ; sleep 1 ; done";
-                        }
+                        logPath = "cat /proc/kmsg";
                         break;
                     case "NFLOG":
                         logPath = Api.getNflogPath(getApplicationContext());
-                        logPath = "echo $$ & " + logPath + " " + QUEUE_NUM;
+                        logPath =  logPath + " " + QUEUE_NUM;
                         break;
                 }
 
                 Log.i(TAG, "Starting Log Service: " + logPath + " for LogTarget: " + G.logTarget());
-                Log.i(TAG, "rootSession " + rootSession != null ? "rootSession is not Null" : "Null rootSession");
-                handler = new Handler();
+                callbackList = new CallbackList<String>() {
+                    @Override
+                    public void onAddElement(String line) {
+                        //kmsg entering into idle state, wait for few seconds and start again ?
+                        if(line.contains("suspend exit")) {
+                            restartWatcher(logPath);
+                        }
 
-                if (logPath != null) {
-                    rootSession = new Shell.Builder()
-                            .useSU()
-                            .setMinimalLogging(true)
-                            .setOnSTDOUTLineListener(line -> {
-                                //Log.i(TAG,line);
-                                if (line != null && !line.isEmpty() && line.startsWith("PID=")) {
-                                    try {
-                                        String uid = line.split("=")[1];
-                                        if (uid != null) {
-                                            Set data = G.storedPid();
-                                            if (data == null || data.isEmpty()) {
-                                                data = new HashSet();
-                                                data.add(uid);
-                                                G.storedPid(data);
-                                            } else if (!data.contains(uid)) {
-                                                Set data2 = new HashSet();
-                                                data2.addAll(data);
-                                                data2.add(uid);
-                                                G.storedPid(data2);
-                                            }
-                                        }
-                                    } catch (Exception e) {
-                                        e.printStackTrace();
-                                    }
-                                } else {
-                                    storeLogInfo(line, getApplicationContext());
-                                }
-                            }).addCommand(logPath).open();
-                } else {
-                    Log.i(TAG, "Unable to start log service. Log Path is empty");
-                    Api.toast(getApplicationContext(), getApplicationContext().getString(R.string.error_log));
-                    G.enableLogService(false);
-                    stopSelf();
-                }
+                        if(line.contains("{AFL}")) {
+                            storeLogInfo(line, getApplicationContext());
+                        }
+                    }
+                };
+                initiateLogWatcher(logPath);
+                createNotification();
+
             } else {
                 Log.i(TAG, "Unable to start log service. LogTarget is empty");
                 Api.toast(getApplicationContext(), getApplicationContext().getString(R.string.error_log));
                 G.enableLogService(false);
                 stopSelf();
             }
-        } else {
-            Log.i(Api.TAG, "Logservice is running.. skipping");
         }
     }
 
-    private void closeSession() {
-        new Thread(() -> {
-            Log.i(Api.TAG, "Cleanup session");
-            if (rootSession != null) {
-                rootSession.close();
+    private void restartWatcher(String logPath) {
+        final Handler handler = new Handler(Looper.getMainLooper());
+        handler.postDelayed(() -> {
+            Log.i(G.TAG, "Restarting log watcher after 5s");
+            initiateLogWatcher(logPath);
+        }, 5000);
+    }
+
+    private void createNotification() {
+        manager = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+        manager.cancel(109);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel notificationChannel = new NotificationChannel(NOTIFICATION_CHANNEL_ID, ctx.getString(R.string.firewall_log_notify), NotificationManager.IMPORTANCE_DEFAULT);
+            notificationChannel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+            assert manager != null;
+            if (G.getNotificationPriority() == 0) {
+                notificationChannel.setImportance(NotificationManager.IMPORTANCE_DEFAULT);
             }
-        }).start();
-        Api.cleanupUid();
+            notificationChannel.setSound(null, null);
+            notificationChannel.setShowBadge(false);
+            notificationChannel.enableLights(false);
+            notificationChannel.enableVibration(false);
+            manager.createNotificationChannel(notificationChannel);
+        }
+
+        Intent appIntent = new Intent(ctx, LogActivity.class);
+        appIntent.setAction(Intent.ACTION_MAIN);
+        appIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+        appIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+        PendingIntent notifyPendingIntent = PendingIntent.getActivity(ctx, 0, appIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+        notificationBuilder = new NotificationCompat.Builder(ctx, NOTIFICATION_CHANNEL_ID);
+        notificationBuilder.setContentIntent(notifyPendingIntent);
+    }
+
+    private void initiateLogWatcher(String logCommand) {
+        //kills the existing one
+        if(executorService != null) {
+            executorService.shutdownNow();
+        } else {
+            executorService = Executors.newCachedThreadPool();
+        }
+
+        //make sure it's enabled first
+        if(G.enableLogService()) {
+            Log.i(TAG, "Staring log watcher");
+            //Toast.makeText(getApplicationContext(), getString(R.string.log_service_watcher), Toast.LENGTH_SHORT).show();
+            try {
+                com.topjohnwu.superuser.Shell.su(logCommand).to(callbackList).submit(executorService, out -> {
+                    //failed to start, try restarting
+                    if (out.getCode() == 0) {
+                        restartWatcher(logPath);
+                    } else {
+                        Log.i(TAG, "Started successfully");
+                    }
+                });
+            } catch(Exception e) {
+                Log.i(TAG, "Unable to start log service.");
+            }
+        } else{
+            if(executorService != null) {
+                executorService.shutdownNow();
+            }
+        }
     }
 
 
-    /* private static class Task extends AsyncTask<Void, Void, LogInfo> {
-         private Context context;
-         private String line;
-         private Task(Context context, String line) {
-             this.context = context;
-             this.line = line;
-         }
-         @Override
-         protected LogInfo doInBackground(Void... voids) {
-             return LogInfo.parseLogs(line, context);
-         }
-         @Override
-         protected void onPostExecute(LogInfo a) {
-             if (a != null) {
-                 LogRxEvent.publish(new LogEvent(a, context));
-             }
-         }
-     }
- */
     private void storeLogInfo(String line, Context context) {
-        if (G.enableLogService()) {
-            if (line != null && line.trim().length() > 0) {
-                if (line.contains("{AFL}")) {
-                    try {
-                        new Thread(() -> {
-                            LogRxEvent.publish(new LogEvent(LogInfo.parseLogs(line, context, "{AFL}", 0), context));
-                        }).start();
-                    } catch (Exception e) {
-                        //e.printStackTrace();
-                    }
+        try {
+
+            LogEvent event = new LogEvent(LogInfo.parseLogs(line, context, "{AFL}", 0), context);
+            if(event.logInfo != null) {
+                store(event.logInfo, event.ctx);
+                showNotification(event.logInfo);
+                /*try {
+                    LogPreference logPreference = SQLite.select()
+                            .from(LogPreference.class)
+                            .where(LogPreference_Table.uid.eq(event.logInfo.uid)).querySingle();
+                    if(logPreference!=null && !logPreference.isDisable()) {
+                        showNotification(event.logInfo);
+                    } }
+                catch (Exception e) {
+                    showNotification(event.logInfo);
+                }*/
+            }
+        } catch (Exception e) {
+            Log.e(TAG, e.getMessage(), e);
+            //e.printStackTrace();
+        }
+    }
+
+
+    private void checkBatteryOptimize() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            final Intent doze = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+            if (Api.batteryOptimized(this) && getPackageManager().resolveActivity(doze, 0) != null) {
+            }
+        }
+    }
+
+    private static PrettyTime prettyTime;
+
+    public static String pretty(Date date) {
+        if (prettyTime == null) {
+            prettyTime = new PrettyTime(new Locale(G.locale()));
+            for (TimeUnit t : prettyTime.getUnits()) {
+                if (t instanceof JustNow) {
+                    prettyTime.removeUnit(t);
+                    break;
                 }
             }
         }
+        prettyTime.setReference(date);
+        return prettyTime.format(new Date(0));
     }
+
+    @SuppressLint("RestrictedApi")
+    private void showNotification(LogInfo logInfo) {
+        /*Drawable icon = getPackageManager().getApplicationIcon(Api.getPackageDetails(getApplicationContext(), logInfo.uid).applicationInfo);
+        Bitmap bitmap = null;
+        if (icon instanceof BitmapDrawable) {
+            bitmap = ((BitmapDrawable)icon).getBitmap();
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if(icon instanceof  AdaptiveIconDrawable) {
+                bitmap = Api.getBitmapFromDrawable(icon);
+            }
+        }*/
+
+        if(G.enableLogService()) {
+            manager.notify(109, notificationBuilder.setOngoing(false)
+                    .setCategory(NotificationCompat.CATEGORY_EVENT)
+                    .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+                    .setContentText(logInfo.uidString)
+                    //.setLargeIcon(bitmap)
+                    .setSmallIcon(R.drawable.ic_block_black_24dp)
+                    .setAutoCancel(true)
+                    .build());
+        }
+    }
+
+
 
     private static void store(final LogInfo logInfo, Context context) {
         try {
@@ -381,23 +353,24 @@ public class LogService extends Service {
                 //reconnect logic
                 try {
                     FlowManager.init(new FlowConfig.Builder(context).build());
+                    store(logInfo,context);
                 } catch (Exception de) {
-                    Log.i(TAG, "Exception while saving log data:" + e.getLocalizedMessage());
+                    Log.e(TAG, "Exception while saving log data:" + e.getLocalizedMessage(), de);
                 }
             }
-            Log.i(TAG, "Exception while saving log data:" + e.getLocalizedMessage());
+            Log.e(TAG, "Exception while saving log data:" + e.getLocalizedMessage(), e);
         } catch (Exception e) {
-            Log.i(TAG, "Exception while saving log data:" + e.getLocalizedMessage());
+            Log.e(TAG, "Exception while saving log data:" + e.getLocalizedMessage(),e);
         }
-
     }
 
     @Override
     public void onDestroy() {
-        closeSession();
-        if (disposable != null) {
-            disposable.dispose();
+        Log.d(TAG, "Log service onDestroy");
+        if(executorService != null) {
+            executorService.shutdownNow();
         }
+        executorService = null;
         super.onDestroy();
     }
 
@@ -406,15 +379,14 @@ public class LogService extends Service {
         super.onTaskRemoved(rootIntent);
         Log.d(TAG, "Log service removed");
 
-        PendingIntent service = PendingIntent.getService(
-                getApplicationContext(),
-                1001,
-                new Intent(getApplicationContext(), LogService.class),
-                PendingIntent.FLAG_ONE_SHOT);
-
+        Intent intent = new Intent(getApplicationContext(), LogService.class);
+        PendingIntent pendingIntent = PendingIntent.getService(this, 1, intent, PendingIntent.FLAG_ONE_SHOT);
         AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
-        alarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, 1000, service);
+        alarmManager.set(AlarmManager.RTC_WAKEUP, SystemClock.elapsedRealtime() + 000, pendingIntent);
+        if(executorService != null) {
+            executorService.shutdownNow();
+        }
+        executorService = null;
+        super.onTaskRemoved(rootIntent);
     }
-
-
 }

@@ -2,6 +2,8 @@
 *.apk
 *.ap_
 
+.DS_Store
+
 # Files for the dex VM
 *.dex
 
@@ -48,7 +50,7 @@ obj/
 # IDE related 
 .idea/
 *.iml
-aFWall/*.iml
+app/*.iml
 .settings/
 
 # Proguard 

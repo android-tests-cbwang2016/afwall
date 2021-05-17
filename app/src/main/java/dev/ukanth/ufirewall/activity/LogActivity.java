@@ -61,6 +61,8 @@ import dev.ukanth.ufirewall.util.DateComparator;
 import dev.ukanth.ufirewall.util.G;
 import dev.ukanth.ufirewall.util.SecurityUtil;
 
+import static dev.ukanth.ufirewall.util.G.isDonate;
+
 public class LogActivity extends AppCompatActivity implements SwipeRefreshLayout.OnRefreshListener {
 
     private RecyclerView recyclerView;
@@ -78,15 +80,10 @@ public class LogActivity extends AppCompatActivity implements SwipeRefreshLayout
         super.onCreate(savedInstanceState);
         initTheme();
         setContentView(R.layout.log_view);
+
         Toolbar toolbar = findViewById(R.id.rule_toolbar);
         setTitle(getString(R.string.showlog_title));
-        //toolbar.setNavigationIcon(R.drawable.abc_ic_ab_back_mtrl_am_alpha);
-        toolbar.setNavigationOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                finish();
-            }
-        });
+        toolbar.setNavigationOnClickListener(v -> finish());
 
         setSupportActionBar(toolbar);
 
@@ -140,7 +137,7 @@ public class LogActivity extends AppCompatActivity implements SwipeRefreshLayout
         recyclerView.setHasFixedSize(true);
         recyclerView.setLayoutManager(new LinearLayoutManager(getApplicationContext()));
         recyclerViewAdapter = new LogRecyclerViewAdapter(getApplicationContext(), logData -> {
-            if(G.isDoKey(ctx) || G.isDonate()) {
+            if(G.isDoKey(ctx) || isDonate()) {
                 Intent intent = new Intent(ctx, LogDetailActivity.class);
                 intent.putExtra("DATA",logData.getUid());
                 startActivity(intent);
@@ -235,8 +232,11 @@ public class LogActivity extends AppCompatActivity implements SwipeRefreshLayout
             } finally {
                 loadDialog = null;
             }
+            recyclerView.setAdapter(null);
+            recyclerView.setAdapter(recyclerViewAdapter);
 
             mSwipeLayout.setRefreshing(false);
+
 
             if (logPresent != null && logPresent) {
                 recyclerViewAdapter.notifyDataSetChanged();
@@ -248,7 +248,10 @@ public class LogActivity extends AppCompatActivity implements SwipeRefreshLayout
                 recyclerView.setVisibility(View.GONE);
                 emptyView.setVisibility(View.VISIBLE);
             }
-            Log.i(Api.TAG,"Ended Loading: " + System.currentTimeMillis());
+
+            recyclerView.getRecycledViewPool().clear();
+            recyclerView.setRecycledViewPool(new RecyclerView.RecycledViewPool());
+            //Log.i(Api.TAG,"Ended Loading: " + System.currentTimeMillis());
         }
     }
 
@@ -306,14 +309,13 @@ public class LogActivity extends AppCompatActivity implements SwipeRefreshLayout
                             //data already Present. Update the template here
                             count.put(data.getUid(), count.get(data.getUid()).intValue() + 1);
                             tmpData.setCount(count.get(data.getUid()).intValue());
-                            logMap.put(data.getUid(), tmpData);
                         } else {
                             //process template here
                             count.put(data.getUid(), 1);
                             tmpData.setCount(1);
                             lastBlocked.put(data.getUid(), data.getTimestamp());
-                            logMap.put(data.getUid(), tmpData);
                         }
+                        logMap.put(data.getUid(), tmpData);
                     }
                 //}
             //};

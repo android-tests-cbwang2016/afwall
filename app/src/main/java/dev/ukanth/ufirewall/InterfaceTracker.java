@@ -27,8 +27,13 @@ import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.net.Network;
 import android.net.NetworkInfo;
+import android.net.NetworkRequest;
 import android.net.wifi.WifiManager;
+import android.os.Build;
+import android.widget.Toast;
 
 import java.lang.reflect.Method;
 import java.net.Inet4Address;
@@ -91,6 +96,7 @@ public final class InterfaceTracker {
                     d.tetherWifiStatusKnown = true;
                     Log.d(TAG, "isWifiApEnabled is " + d.isWifiTethered);
                 } catch (Exception e) {
+                    Log.e(G.TAG, "Exception in getting Wifi tether status");
                     Log.e(Api.TAG, android.util.Log.getStackTraceString(e));
                 }
             }
@@ -113,15 +119,21 @@ public final class InterfaceTracker {
 
     // To get bluetooth tethering, we need valid BluetoothPan instance
     // It is obtainable only in ServiceListener.onServiceConnected callback
-    public static void setupBluetoothProfile(Context context) {
+    public static BluetoothAdapter setupBluetoothProfile(Context context) {
+        BluetoothAdapter bluetoothAdapter = null;
         PackageManager pm = context.getPackageManager();
         boolean hasBluetooth = pm.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH);
         if (hasBluetooth) {
-            BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+            bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
             if (bluetoothAdapter != null) {
                 bluetoothAdapter.getProfileProxy(context, btListener, 5);
             }
         }
+        return bluetoothAdapter;
+    }
+
+    public static BluetoothProfile getBtProfile() {
+        return btPanProfile;
     }
 
     private static void getBluetoothTetherStatus(Context context, InterfaceDetails d) {
@@ -158,7 +170,7 @@ public final class InterfaceTracker {
 
         NetworkInfo info = cm.getActiveNetworkInfo();
 
-        if (info == null || info.isConnected() == false) {
+        if (info == null || !info.isConnected()) {
             return ret;
         }
 
@@ -384,12 +396,14 @@ public final class InterfaceTracker {
                         String mask = truncAfter(ip.getHostAddress(), "%") + "/" +
                                 addr.getNetworkPrefixLength();
 
-                        if (ip instanceof Inet4Address) {
-                            Log.i(TAG, "Found ipv4: " + mask);
-                            ret.lanMaskV4 = mask;
-                        } else if (ip instanceof Inet6Address) {
-                            Log.i(TAG, "Found ipv6: " + mask);
-                            ret.lanMaskV6 = mask;
+                        if(ret.lanMaskV4.isEmpty() || ret.lanMaskV6.isEmpty()) {
+                            if (ip instanceof Inet4Address) {
+                                Log.i(TAG, "Found ipv4: " + mask);
+                                ret.lanMaskV4 = mask;
+                            } else if (ip instanceof Inet6Address) {
+                                Log.i(TAG, "Found ipv6: " + mask);
+                                ret.lanMaskV6 = mask;
+                            }
                         }
                     }
                     if (ret.lanMaskV4.equals("") && ret.lanMaskV6.equals("")) {

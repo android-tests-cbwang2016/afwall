@@ -90,7 +90,7 @@
         <item>ru</item>
         <item>sr_CS</item>
         <item>sr</item>
-        <item>zh_CN</item>
+        <item>zh</item>
         <item>sk</item>
         <item>sl</item>
         <item>es</item>
@@ -110,13 +110,11 @@
     </string-array>
     
     <string-array name="iptables_binary">
-        <item>@string/auto</item>
         <item>@string/system_ipt</item>
         <item>@string/builtin_ipt</item>
     </string-array>
     
       <string-array name="iptables_binary_path">
-        <item>auto</item>
         <item>system</item>
         <item>builtin</item>
     </string-array>
@@ -189,17 +187,15 @@
     </string-array>
 
 
-    <string-array name="logDmesgArray">
+   <!-- <string-array name="logDmesgArray">
         <item>System</item>
         <item>Busybox</item>
-        <!--<item>Toybox</item>-->
     </string-array>
 
     <string-array name="logDmesgValue">
         <item>OS</item>
         <item>BB</item>
-        <!--<item>TB</item>-->
-    </string-array>
+    </string-array>-->
 
 
     <string-array name="notification_type_val">

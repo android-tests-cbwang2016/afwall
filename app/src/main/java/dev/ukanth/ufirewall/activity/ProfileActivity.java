@@ -1,5 +1,7 @@
 package dev.ukanth.ufirewall.activity;
 
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
@@ -10,6 +12,7 @@ import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ListView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.afollestad.materialdialogs.MaterialDialog;
 
@@ -17,11 +20,15 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.ukanth.ufirewall.Api;
+import dev.ukanth.ufirewall.MainActivity;
 import dev.ukanth.ufirewall.R;
+import dev.ukanth.ufirewall.log.Log;
 import dev.ukanth.ufirewall.profiles.ProfileAdapter;
 import dev.ukanth.ufirewall.profiles.ProfileData;
 import dev.ukanth.ufirewall.profiles.ProfileHelper;
 import dev.ukanth.ufirewall.util.G;
+
+import static dev.ukanth.ufirewall.util.G.isDonate;
 
 /**
  * Created by ukanth on 31/7/15.
@@ -34,6 +41,7 @@ public class ProfileActivity extends AppCompatActivity {
     //protected static final int MENU_CLONE = 101;
     protected static final int MENU_DELETE = 102;
     protected static final int MENU_RENAME = 103;
+    protected static final int MENU_CLONE = 104;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -89,8 +97,8 @@ public class ProfileActivity extends AppCompatActivity {
         String name = ((TextView) aInfo.targetView.findViewById(R.id.pro_name)).getText().toString();
         menu.setHeaderTitle(getString(R.string.select) + " " + name);
         if (G.isProfileMigrated()) {
+            menu.add(0, MENU_CLONE, 0, getString(R.string.clone));
             menu.add(0, MENU_RENAME, 0, getString(R.string.rename));
-            // menu.add(0, MENU_CLONE, 0, getString(R.string.clone));
         }
         menu.add(0, MENU_DELETE, 0, getString(R.string.delete));
     }
@@ -129,12 +137,56 @@ public class ProfileActivity extends AppCompatActivity {
                     }
                 }
                 break;
-            /*case MENU_CLONE:
-                break;*/
+            case MENU_CLONE:
+                if ((G.isDoKey(getApplicationContext()) || isDonate())) {
+                    ProfileData data = ProfileHelper.getProfileByName(profileName);
+                    if(data != null) {
+                        String exitingName = data.getName();
+                        if(data != null) {
+                            new MaterialDialog.Builder(this)
+                                    .cancelable(true)
+                                    .title(R.string.profile_rename)
+                                    .inputType(InputType.TYPE_CLASS_TEXT)
+                                    .input(exitingName, exitingName, (dialog, input) -> {
+                                        String newName = input.toString();
+                                        //copy data
+                                        ProfileData data1 = null;
+                                        try {
+                                            data1 = data.clone();
+                                            if (isNotDuplicate(newName)) {
+                                                String identifier = newName.replaceAll("\\s+", "");
+                                                data1.removeId();
+                                                data1.setName(newName);
+                                                data1.setIdentifier(identifier);
+                                                data1.save();
+                                                SharedPreferences fromShared = getSharedPreferences(profileName, Context.MODE_PRIVATE);
+                                                SharedPreferences.Editor toShared = getSharedPreferences(newName,Context.MODE_PRIVATE).edit();
+                                                Api.copySharedPreferences(fromShared,toShared);
+                                                profilesList.add(data1);
+                                                profileAdapter.notifyDataSetChanged();
+                                            } else {
+                                                Api.toast(getApplicationContext(), getString(R.string.profile_duplicate));
+                                            }
+                                        } catch (CloneNotSupportedException e) {
+                                            Log.e(G.TAG, e.getMessage(), e);
+                                        }
+
+
+                                    }).show();
+                        }
+                    } else{
+                        Log.i(G.TAG,"Unable to clone. Data from DB is empty");
+                        Toast.makeText(getApplicationContext(), getString(R.string.unable_clone), Toast.LENGTH_LONG).show();
+                    }
+
+                } else{
+                    Api.donateDialog(ProfileActivity.this, true);
+                }
+                break;
             case MENU_RENAME:
-                ProfileData data = ProfileHelper.getProfileByName(profileName);
-                if (data != null) {
-                    renameProfile(data, aInfo.position);
+                ProfileData data2 = ProfileHelper.getProfileByName(profileName);
+                if (data2 != null) {
+                    renameProfile(data2, aInfo.position);
                 }
                 break;
         }
@@ -149,9 +201,7 @@ public class ProfileActivity extends AppCompatActivity {
 
         if (G.isProfileMigrated()) {
             List<ProfileData> profiles = ProfileHelper.getProfiles();
-            for (ProfileData pro : profiles) {
-                profilesList.add(pro);
-            }
+            profilesList.addAll(profiles);
         } else {
             profilesList.add(new ProfileData(G.gPrefs.getString("profile1", getString(R.string.profile1)), "AFWallProfile1"));
             profilesList.add(new ProfileData(G.gPrefs.getString("profile2", getString(R.string.profile2)), "AFWallProfile2"));
@@ -172,21 +222,18 @@ public class ProfileActivity extends AppCompatActivity {
                 .cancelable(true)
                 .title(R.string.profile_rename)
                 .inputType(InputType.TYPE_CLASS_TEXT)
-                .input(exitingName, exitingName, new MaterialDialog.InputCallback() {
-                    @Override
-                    public void onInput(MaterialDialog dialog, CharSequence input) {
-                        String profileName = input.toString();
-                        if (isNotDuplicate(profileName)) {
-                            profilesList.remove(position);
-                            data.setName(profileName);
-                            data.save();
-                            profilesList.add(position, data);
-                            profileAdapter.notifyDataSetChanged();
-                        } else {
-                            Api.toast(getApplicationContext(), getString(R.string.profile_duplicate));
-                        }
-
+                .input(exitingName, exitingName, (dialog, input) -> {
+                    String profileName = input.toString();
+                    if (isNotDuplicate(profileName)) {
+                        profilesList.remove(position);
+                        data.setName(profileName);
+                        data.save();
+                        profilesList.add(position, data);
+                        profileAdapter.notifyDataSetChanged();
+                    } else {
+                        Api.toast(getApplicationContext(), getString(R.string.profile_duplicate));
                     }
+
                 }).show();
     }
 
@@ -197,26 +244,23 @@ public class ProfileActivity extends AppCompatActivity {
                 .cancelable(true)
                 .title(R.string.profile_add)
                 .inputType(InputType.TYPE_CLASS_TEXT)
-                .input(R.string.profile_add, R.string.profile_hint, new MaterialDialog.InputCallback() {
-                    @Override
-                    public void onInput(MaterialDialog dialog, CharSequence input) {
-                        String profileName = input.toString();
-                        if (isNotDuplicate(profileName)) {
-                            String identifier = profileName.replaceAll("\\s+", "");
-                            ProfileData data = new ProfileData(profileName, identifier);
-                            if (G.isProfileMigrated()) {
-                                //store to database
-                                data.save();
-                                ProfileActivity.this.profilesList.add(data);
-                                ProfileActivity.this.profileAdapter.notifyDataSetChanged();
-                            } else {
-                                Api.toast(getApplicationContext(), getString(R.string.profile_notsupport));
-                            }
+                .input(R.string.profile_add, R.string.profile_hint, (dialog, input) -> {
+                    String profileName = input.toString();
+                    if (isNotDuplicate(profileName)) {
+                        String identifier = profileName.replaceAll("\\s+", "");
+                        ProfileData data = new ProfileData(profileName, identifier);
+                        if (G.isProfileMigrated()) {
+                            //store to database
+                            data.save();
+                            profilesList.add(data);
+                            profileAdapter.notifyDataSetChanged();
                         } else {
-                            Api.toast(getApplicationContext(), getString(R.string.profile_duplicate));
+                            Api.toast(getApplicationContext(), getString(R.string.profile_notsupport));
                         }
-                        // We notify the data model is changed
+                    } else {
+                        Api.toast(getApplicationContext(), getString(R.string.profile_duplicate));
                     }
+                    // We notify the data model is changed
                 }).show();
 
     }

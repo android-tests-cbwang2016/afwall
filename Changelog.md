@@ -1,14 +1,36 @@
 AFWall+ Changelog
 ==================
 
-Version 3.5.0-BETA-1
-* Feature: Show installed apps without internet permission
-* Feature: Default setting for installed app (Blacklist/whitelist) - Donate Only
-* Fix: Logs do not show app image
-* Fix: Better support for Multiprofile/Island/Workprofile - Thanks to @n90p
-* Fix: Log service startup issue
+Version 3.5.2
+
+* Fix: Fail to Import from older versions.
+* IPv6 issues on few devices when enabled.
+* Chinese lang issue  
+* Crash fixes.
+* Removed run_pie binaries which are no longer used.
+
+
+Version 3.5.1
+* Feature: Cloning of profiles
+* Bug: PrivateDNS changes on boot 
+* Bug: Log target missing on few scenarios
+* Bug: Import/Export rules missing on A11
+
+
+Version 3.5.0
+Features
+ - Show installed apps without internet permission
+ - Default setting for installed app - Donate Only
+ - Private DNS support
+ - Better support for Multi Profile/Island/Work Profile - Thanks to @n90p
+ - Firewall logs engine rewritten with notification support
+ - Support for android 10 and 11
+Bug Fixes:
+ - Lots of logs related issues
+ - Export rules with mode
+ - Language option issue
+ - device rotation issue
 * Update support tools and build libraries(AndroidX)
-* Target SDK to android 10
 
 Version 3.4.0
 * Feature: Bluetooth,USB tethering as separate rules - Thanks @nxzero

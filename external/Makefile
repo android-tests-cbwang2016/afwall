@@ -33,14 +33,14 @@ NDK_SYSROOT := $(NDK)/platforms/android-$(APIVER)/arch-$(ARCH)
 BINDIR := $(firstword $(wildcard $(NDK)/toolchains/$(TOOLCHAIN)/prebuilt/*/bin))
 PATH := $(BINDIR):$(NDK):$(PATH)
 
-RESDIR := $(shell pwd)/../aFWall/src/main/res/raw/
+RESDIR := $(shell pwd)/../app/src/main/res/raw/
 DESTDIR := $(shell pwd)/$(TRIPLET)/out
 
 CONFIGURE_ARGS := --host=$(TRIPLET) --disable-shared --enable-static \
 		  CFLAGS="--sysroot=$(NDK_SYSROOT) -O2 -fvisibility=default -fPIE" \
                   LDFLAGS="-rdynamic -pie" \
 
-PER_ARCH_TARGETS := iptables busybox nflog run_pie
+PER_ARCH_TARGETS := iptables busybox nflog
 
 .PHONY: all unpack clean
 all: $(addsuffix -binaries,$(ARCH_LIST))
@@ -138,15 +138,15 @@ nflog-unpack:
 #
 # Build Run PIE
 #
-NDK_OUTDIR := ../libs/$(NDK_ABINAME)
+# NDK_OUTDIR := ../libs/$(NDK_ABINAME)
 
-$(NDK_OUTDIR)/run_pie:
-	ndk-build APP_ABI=$(NDK_ABINAME)
+# $(NDK_OUTDIR)/run_pie:
+#	ndk-build APP_ABI=$(NDK_ABINAME)
 
-.PHONY: run_pie run_pie-unpack
-run_pie: $(NDK_OUTDIR)/run_pie
-	cp $< $(RESDIR)/run_pie_$(ARCH)
-run_pie-unpack:
+#.PHONY: run_pie run_pie-unpack
+#run_pie: $(NDK_OUTDIR)/run_pie
+#	cp $< $(RESDIR)/run_pie_$(ARCH)
+# run_pie-unpack:
 
 #####################################################################
 #

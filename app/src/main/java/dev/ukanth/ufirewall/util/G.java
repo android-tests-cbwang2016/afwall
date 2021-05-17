@@ -23,6 +23,7 @@
 
 package dev.ukanth.ufirewall.util;
 
+import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
@@ -31,6 +32,11 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.database.sqlite.SQLiteCantOpenDatabaseException;
 import android.graphics.Color;
+import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.net.Network;
+import android.net.NetworkRequest;
+import android.os.Build;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.text.TextUtils;
@@ -53,6 +59,7 @@ import java.util.regex.PatternSyntaxException;
 
 import dev.ukanth.ufirewall.Api;
 import dev.ukanth.ufirewall.BuildConfig;
+import dev.ukanth.ufirewall.InterfaceTracker;
 import dev.ukanth.ufirewall.MainActivity;
 import dev.ukanth.ufirewall.log.Log;
 import dev.ukanth.ufirewall.log.LogPreference;
@@ -65,7 +72,17 @@ public class G extends Application implements Application.ActivityLifecycleCallb
 
     private static G instance;
 
+    private static boolean enabledPrivateLink = false;
+
     private static boolean isActivityVisible;
+
+    static {
+        //TODO: Remove this line before release
+        //com.topjohnwu.superuser.Shell.enableVerboseLogging = BuildConfig.DEBUG;
+        com.topjohnwu.superuser.Shell.setDefaultBuilder(com.topjohnwu.superuser.Shell.Builder.create()
+                .setFlags(com.topjohnwu.superuser.Shell.FLAG_REDIRECT_STDERR)
+        );
+    }
 
     public static G getInstance() {
         return instance;
@@ -101,12 +118,12 @@ public class G extends Application implements Application.ActivityLifecycleCallb
     private static final String SHOW_UID = "showUid";
     private static final String NOTIFY_INSTALL = "notifyAppInstall";
     private static final String DISABLE_ICONS = "disableIcons";
-    private static final String IPTABLES_PATH = "ip_path";
+    private static final String IPTABLES_PATH = "ipt_path";
     private static final String PROTECTION_OPTION = "passSetting";
     private static final String BUSYBOX_PATH = "bb_path";
     private static final String TOAST_POS = "toast_pos";
     private static final String LANGUAGE = "locale";
-    private static final String LOG_DMESG = "logDmesg";
+    //private static final String LOG_DMESG = "logDmesg";
     private static final String SORT_BY = "sort";
     private static final String LAST_STORED_PROFILE = "storedProfile";
     private static final String STARTUP_DELAY = "addDelayStart";
@@ -136,17 +153,20 @@ public class G extends Application implements Application.ActivityLifecycleCallb
     private static final String CUSTOM_DELAY_SECONDS = "customDelay";
     private static final String NOTIFICATION_PRIORITY = "notification_priority";
     private static final String RUN_NOTIFICATION = "runNotification";
+    private static final String COPIED_OLD_EXPORTS = "copyOldExports";
 
     private static final String SHOW_ALL_APPS = "showAllApps";
 
     private static final String THEME = "theme";
     private static final String FASTER_RULES = "fasterApplyRules";
+
+    private static boolean privateDns = false;
     //private static final String QUICK_RULES = "quickApply";
     /**
      * FIXME
      **/
     private static final String AFWALL_STATUS = "AFWallStaus";
-    private static final String BLOCKED_NOTIFICATION = "block_filter_app";
+    //private static final String BLOCKED_NOTIFICATION = "block_filter_app";
     /* Profiles */
     private static final String ADDITIONAL_PROFILES = "plusprofiles";
     //private static final String PROFILES = "profiles_json";
@@ -167,7 +187,7 @@ public class G extends Application implements Application.ActivityLifecycleCallb
     private static final String INITPATH = "initPath";
 
     private static final String AFWALL_PROFILE = "AFWallProfile";
-    private static final String SHOW_LOG_TOAST = "showLogToasts";
+    //private static final String SHOW_LOG_TOAST = "showLogToasts";
     public static String[] profiles = {"AFWallPrefs", AFWALL_PROFILE + 1, AFWALL_PROFILE + 2, AFWALL_PROFILE + 3};
     public static String[] default_profiles = {"AFWallProfile1", "AFWallProfile2", "AFWallProfile3"};
     public static Context ctx;
@@ -209,6 +229,16 @@ public class G extends Application implements Application.ActivityLifecycleCallb
 
     public static boolean isRun(boolean val) {
         gPrefs.edit().putBoolean(RUN_NOTIFICATION, val).commit();
+        return val;
+    }
+
+
+    public static boolean hasCopyOld() {
+        return gPrefs.getBoolean(COPIED_OLD_EXPORTS, false);
+    }
+
+    public static boolean hasCopyOldExports(boolean val) {
+        gPrefs.edit().putBoolean(COPIED_OLD_EXPORTS, val).commit();
         return val;
     }
 
@@ -367,7 +397,7 @@ public class G extends Application implements Application.ActivityLifecycleCallb
     public static boolean activeNotification(boolean val) {
         gPrefs.edit().putBoolean(ACTIVE_NOTIFICATION, val).commit();
         return val;
-    }*/
+    }
 
     public static boolean showLogToasts() {
         return gPrefs.getBoolean(SHOW_LOG_TOAST, false);
@@ -376,7 +406,7 @@ public class G extends Application implements Application.ActivityLifecycleCallb
     public static boolean showLogToasts(boolean val) {
         gPrefs.edit().putBoolean(SHOW_LOG_TOAST, val).commit();
         return val;
-    }
+    }*/
 
     public static boolean fixLeak() {
         return gPrefs.getBoolean(FIX_START_LEAK, false);
@@ -506,7 +536,7 @@ public class G extends Application implements Application.ActivityLifecycleCallb
     }
 
     public static String ip_path() {
-        return gPrefs.getString(IPTABLES_PATH, "auto");
+        return gPrefs.getString(IPTABLES_PATH, "system");
     }
 
     public static String ip_path(String val) {
@@ -540,14 +570,14 @@ public class G extends Application implements Application.ActivityLifecycleCallb
         return val;
     }
 
-    public static String logDmsg() {
+    /*public static String logDmsg() {
         return gPrefs.getString(LOG_DMESG, "OS");
     }
 
     public static String logDmsg(String val) {
         gPrefs.edit().putString(LOG_DMESG, val).commit();
         return val;
-    }
+    }*/
 
     public static String sortBy() {
         return gPrefs.getString(SORT_BY, "s0");
@@ -632,7 +662,7 @@ public class G extends Application implements Application.ActivityLifecycleCallb
     }
 
     public static String logTarget() {
-        return gPrefs.getString(LOG_TARGET, "LOG");
+        return gPrefs.getString(LOG_TARGET, "").trim();
     }
 
     public static String logTarget(String val) {
@@ -800,11 +830,11 @@ public class G extends Application implements Application.ActivityLifecycleCallb
         return gPrefs.getString(PROTECTION_OPTION, "p0");
     }
 
-    public static void setBlockedNotifyApps(List<Integer> list) {
+    /*public static void setBlockedNotifyApps(List<Integer> list) {
         String listString = list.toString();
         listString = listString.substring(1, listString.length() - 1);
         gPrefs.edit().putString(BLOCKED_NOTIFICATION, listString).commit();
-    }
+    }*/
 
 
     public static void storeBlockedApps(List<Integer> list) {
@@ -866,7 +896,7 @@ public class G extends Application implements Application.ActivityLifecycleCallb
         return data;
     }*/
 
-    public static List<Integer> getBlockedNotifyList() {
+    /*public static List<Integer> getBlockedNotifyList() {
         List<Integer> data = new ArrayList<Integer>();
         try {
             String blockedApps = gPrefs.getString(BLOCKED_NOTIFICATION, null);
@@ -888,7 +918,7 @@ public class G extends Application implements Application.ActivityLifecycleCallb
         } catch (Exception e) {
         }
         return data;
-    }
+    }*/
 
     //This method is used for Xposed
     public static boolean isXposedEnabled() {
@@ -1010,8 +1040,7 @@ public class G extends Application implements Application.ActivityLifecycleCallb
     }
 
     public static List<String> getDefaultProfiles() {
-        List<String> items = new ArrayList<String>(Arrays.asList(default_profiles));
-        return items;
+        return new ArrayList<String>(Arrays.asList(default_profiles));
     }
 
     public static void updateLogNotification(int uid, boolean isChecked) {
@@ -1023,10 +1052,10 @@ public class G extends Application implements Application.ActivityLifecycleCallb
         FlowManager.getDatabase(LogPreferenceDB.class).beginTransactionAsync(databaseWrapper -> preference.save(databaseWrapper)).build().execute();
     }
 
-    public static void isNotificationMigrated(boolean b) {
+    /*public static void isNotificationMigrated(boolean b) {
         gPrefs.edit().putBoolean("NewDBNotification", b).commit();
         gPrefs.edit().putString(BLOCKED_NOTIFICATION, "").commit();
-    }
+    }*/
 
     public static boolean isNotificationMigrated() {
         return gPrefs.getBoolean("NewDBNotification", false);
@@ -1119,4 +1148,30 @@ public class G extends Application implements Application.ActivityLifecycleCallb
         return m2.matches();
     }
 
+    public static boolean getPrivateDnsStatus() {
+        return privateDns;
+    }
+
+    public static  void registerPrivateLink() {
+        if(!enabledPrivateLink) {
+            ConnectivityManager cm = (ConnectivityManager) getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+            ConnectivityManager.NetworkCallback callback = new ConnectivityManager.NetworkCallback() {
+                @Override
+                public void onLinkPropertiesChanged(Network network, LinkProperties linkProperties) {
+                    super.onLinkPropertiesChanged(network, linkProperties);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        if(linkProperties.isPrivateDnsActive() != privateDns) {
+                            Log.i(Api.TAG, "Private DNS status changed: " + privateDns);
+                            privateDns = linkProperties.isPrivateDnsActive();
+                            InterfaceTracker.applyRules("Private DNS changed.. reapplying rules");
+                        }
+                    }
+                }
+            };
+            cm.registerNetworkCallback(new NetworkRequest.Builder().build(), callback);
+            enabledPrivateLink = true;
+        } else{
+            Log.i(TAG, "Private link has registered already");
+        }
+    }
 }

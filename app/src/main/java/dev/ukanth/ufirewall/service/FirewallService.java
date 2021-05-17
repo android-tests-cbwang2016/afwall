@@ -5,6 +5,8 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothProfile;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -21,6 +23,7 @@ import dev.ukanth.ufirewall.MainActivity;
 import dev.ukanth.ufirewall.R;
 import dev.ukanth.ufirewall.broadcast.ConnectivityChangeReceiver;
 import dev.ukanth.ufirewall.broadcast.PackageBroadcast;
+import dev.ukanth.ufirewall.log.Log;
 import dev.ukanth.ufirewall.util.G;
 
 public class FirewallService extends Service {
@@ -29,6 +32,7 @@ public class FirewallService extends Service {
     BroadcastReceiver connectivityReciver;
     BroadcastReceiver packageReceiver;
     IntentFilter filter;
+    private BluetoothAdapter bluetoothAdapter;
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -179,7 +183,9 @@ public class FirewallService extends Service {
         intentFilter.addDataScheme("package");
         registerReceiver(packageReceiver, intentFilter);
 
-        InterfaceTracker.setupBluetoothProfile(this);
+        if(bluetoothAdapter == null) {
+            bluetoothAdapter = InterfaceTracker.setupBluetoothProfile(this);
+        }
 
         return START_STICKY;
     }
@@ -193,6 +199,14 @@ public class FirewallService extends Service {
         if (packageReceiver != null) {
             unregisterReceiver(packageReceiver);
             packageReceiver = null;
+        }
+
+        if(bluetoothAdapter != null) {
+            try {
+                bluetoothAdapter.closeProfileProxy(5, InterfaceTracker.getBtProfile());
+            }catch (Exception e){
+                Log.e(G.TAG, "Error closing bt profile",e);
+            }
         }
         super.onDestroy();
     }

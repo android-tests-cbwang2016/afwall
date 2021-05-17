@@ -49,12 +49,21 @@ public class OnBootReceiver extends BroadcastReceiver {
 
             InterfaceTracker.applyRulesOnChange(context, InterfaceTracker.BOOT_COMPLETED);
 
+            //register private DNS change listener
+
+
             if (G.enableLogService()) {
                 Log.i("AFWall", "Starting log service onboot");
                 try {
                     context.startService(new Intent(context, LogService.class));
                 } catch (Exception e) {
                 }
+            }
+
+            try {
+                G.registerPrivateLink();
+            }catch (Exception e){
+
             }
         }
 
@@ -65,6 +74,12 @@ public class OnBootReceiver extends BroadcastReceiver {
             handler.postDelayed(() -> {
                 // Apply the changes regards if network is up/not
                 InterfaceTracker.applyRulesOnChange(context, InterfaceTracker.BOOT_COMPLETED);
+
+                try {
+                    G.registerPrivateLink();
+                }catch (Exception e){
+
+                }
             }, G.getCustomDelay());
         }
 

@@ -43,15 +43,21 @@ import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
 import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.net.Network;
 import android.net.NetworkInfo;
+import android.net.NetworkRequest;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.Settings;
@@ -59,6 +65,7 @@ import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.TaskStackBuilder;
 
+import android.text.TextUtils;
 import android.util.Base64;
 import android.util.SparseArray;
 import android.widget.Toast;
@@ -104,16 +111,24 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringTokenizer;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.zip.GZIPInputStream;
 
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.DESKeySpec;
+import javax.xml.transform.Result;
 
 import dev.ukanth.ufirewall.MainActivity.GetAppList;
 import dev.ukanth.ufirewall.log.Log;
@@ -213,7 +228,7 @@ public final class Api {
     private static final String[] dynChains = {"-3g-postcustom", "-3g-fork", "-wifi-postcustom", "-wifi-fork"};
     private static final String[] natChains = {"", "-tor-check", "-tor-filter"};
     private static final String[] staticChains = {"", "-input", "-3g", "-wifi", "-reject", "-vpn", "-3g-tether", "-3g-home", "-3g-roam", "-wifi-tether", "-wifi-wan", "-wifi-lan", "-tor", "-tor-reject", "-tether"};
-    /**
+/**
      * @brief Special user/group IDs that aren't associated with
      * any particular app.
      * <p>
@@ -309,9 +324,13 @@ public final class Api {
 
     public static String getBinaryPath(Context ctx, boolean setv6) {
         boolean builtin = true;
-        String pref = G.ip_path();
+        String ip_path = G.ip_path();
 
-        if (pref.equals("system") || !setv6) {
+        if (ip_path.equals("system")) {
+            builtin = false;
+        } else if(ip_path.equals("builtin")) {
+            builtin = true;
+        } else{
             builtin = false;
         }
 
@@ -319,7 +338,8 @@ public final class Api {
         if (builtin) {
             dir = ctx.getDir("bin", 0).getAbsolutePath() + "/";
         }
-        String ipPath = dir + (setv6 ? "ip6tables" : "iptables");
+
+        String ipPath = dir + (setv6 ?  "ip6tables" : "iptables" );
 
         /*if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN) {
             dir = ctx.getDir("bin", 0).getAbsolutePath() + "/";
@@ -344,11 +364,12 @@ public final class Api {
             return "busybox ";
         } else {
             String dir = ctx.getDir("bin", 0).getAbsolutePath();
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN) {
+            return dir + "/busybox ";
+            /*if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN) {
                 return dir + "/run_pie " + dir + "/busybox ";
             } else {
                 return dir + "/busybox ";
-            }
+            }*/
         }
     }
 
@@ -360,16 +381,16 @@ public final class Api {
      */
     public static String getNflogPath(Context ctx) {
         String dir = ctx.getDir("bin", 0).getAbsolutePath();
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN) {
+        return dir + "/nflog ";
+        /*if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN) {
             return dir + "/run_pie " + dir + "/nflog ";
         } else {
             return dir + "/nflog ";
-        }
+        }*/
     }
 
     public static String getShellPath(Context ctx) {
-        String dir = ctx.getDir("bin", 0).getAbsolutePath();
-        return dir;
+        return ctx.getDir("bin", 0).getAbsolutePath();
     }
 
     /**
@@ -418,7 +439,7 @@ public final class Api {
     private static void addRulesForUidlist(List<String> cmds, List<Integer> uids, String chain, boolean whitelist) {
         String action = whitelist ? " -j RETURN" : " -j " + AFWALL_CHAIN_NAME + "-reject";
 
-        if (uids.indexOf(SPECIAL_UID_ANY) >= 0) {
+        if (uids.contains(SPECIAL_UID_ANY)) {
             if (!whitelist) {
                 cmds.add("-A " + chain + action);
             }
@@ -440,24 +461,35 @@ public final class Api {
             if (whitelist) {
                 if (pref.equals("disable")) {
                     addRuleForUsers(cmds, new String[]{"root"}, "-A " + chain + " -p udp --dport 53", " -j " + AFWALL_CHAIN_NAME + "-reject");
+                    addRuleForUsers(cmds, new String[]{"root"}, "-A " + chain + " -p tcp --dport 53", " -j " + AFWALL_CHAIN_NAME + "-reject");
                 } else {
                     addRuleForUsers(cmds, new String[]{"root"}, "-A " + chain + " -p udp --dport 53", " -j RETURN");
+                    addRuleForUsers(cmds, new String[]{"root"}, "-A " + chain + " -p tcp --dport 53", " -j RETURN");
                 }
             } else {
                 if (pref.equals("disable")) {
                     addRuleForUsers(cmds, new String[]{"root"}, "-A " + chain + " -p udp --dport 53", " -j " + AFWALL_CHAIN_NAME + "-reject");
+                    addRuleForUsers(cmds, new String[]{"root"}, "-A " + chain + " -p tcp --dport 53", " -j " + AFWALL_CHAIN_NAME + "-reject");
                 } else if (pref.equals("enable")) {
                     addRuleForUsers(cmds, new String[]{"root"}, "-A " + chain + " -p udp --dport 53", " -j RETURN");
+                    addRuleForUsers(cmds, new String[]{"root"}, "-A " + chain + " -p tcp --dport 53", " -j RETURN");
                 }
             }
 
 
             // NTP service runs as "system" user
-            if (uids.indexOf(SPECIAL_UID_NTP) >= 0) {
+            if (uids.contains(SPECIAL_UID_NTP)) {
                 addRuleForUsers(cmds, new String[]{"system"}, "-A " + chain + " -p udp --dport 123", action);
             }
 
-            boolean kernel_checked = uids.indexOf(SPECIAL_UID_KERNEL) >= 0;
+
+            if (G.getPrivateDnsStatus()) {
+                cmds.add("-A " + chain + " -p tcp --dport 853" + " -j ACCEPT");
+                // disabling HTTPS over DNS
+                //cmds.add("-A " + chain + " -p tcp --dport 443" + " -j ACCEPT");
+            }
+
+            boolean kernel_checked = uids.contains(SPECIAL_UID_KERNEL);
             if (whitelist) {
                 if (kernel_checked) {
                     // reject any other UIDs, but allow the kernel through
@@ -483,7 +515,7 @@ public final class Api {
         if (G.enableLogService() && G.logTarget() != null) {
             if (G.logTarget().trim().equals("LOG")) {
                 //cmds.add("-A " + AFWALL_CHAIN_NAME  + " -m limit --limit 1000/min -j LOG --log-prefix \"{AFL-ALLOW}\" --log-level 4 --log-uid");
-                cmds.add("-A " + AFWALL_CHAIN_NAME + "-reject" + " -m limit --limit 1000/min -j LOG --log-prefix \"{AFL}\" --log-level 4 --log-uid");
+                cmds.add("-A " + AFWALL_CHAIN_NAME + "-reject" + " -m limit --limit 1000/min -j LOG --log-prefix \"{AFL}\" --log-level 4 --log-uid  --log-tcp-options --log-ip-options");
             } else if (G.logTarget().trim().equals("NFLOG")) {
                 //cmds.add("-A " + AFWALL_CHAIN_NAME + " -j NFLOG --nflog-prefix \"{AFL-ALLOW}\" --nflog-group 40");
                 cmds.add("-A " + AFWALL_CHAIN_NAME + "-reject" + " -j NFLOG --nflog-prefix \"{AFL}\" --nflog-group 40");
@@ -516,7 +548,7 @@ public final class Api {
             cmds.add("-t nat -A " + AFWALL_CHAIN_NAME + "-tor-filter -p tcp --tcp-flags FIN,SYN,RST,ACK SYN -j REDIRECT --to-ports " + tcp_port);
             cmds.add("-t nat -A " + AFWALL_CHAIN_NAME + "-tor-filter -j MARK --set-mark 0x500");
             cmds.add("-t nat -A " + AFWALL_CHAIN_NAME + " -j " + AFWALL_CHAIN_NAME + "-tor-check");
-            cmds.add("-A " + AFWALL_CHAIN_NAME + "-tor -m mark --mark 0x500 -j afwall-reject");
+            cmds.add("-A " + AFWALL_CHAIN_NAME + "-tor -m mark --mark 0x500 -j " + AFWALL_CHAIN_NAME + "-reject");
             cmds.add("-A " + AFWALL_CHAIN_NAME + " -j " + AFWALL_CHAIN_NAME + "-tor");
         }
         if (G.enableInbound()) {
@@ -544,7 +576,8 @@ public final class Api {
      */
     private static void addInterfaceRouting(Context ctx, List<String> cmds, boolean ipv6) {
         try {
-            final InterfaceDetails cfg = InterfaceTracker.getCurrentCfg(ctx, true);
+            //force only for v4
+            final InterfaceDetails cfg = InterfaceTracker.getCurrentCfg(ctx, !ipv6);
             final boolean whitelist = G.pPrefs.getString(PREF_MODE, MODE_WHITELIST).equals(MODE_WHITELIST);
             for (String s : dynChains) {
                 cmds.add("-F " + AFWALL_CHAIN_NAME + s);
@@ -599,6 +632,8 @@ public final class Api {
             } else {
                 cmds.add("-A " + AFWALL_CHAIN_NAME + "-3g-fork -j " + AFWALL_CHAIN_NAME + "-3g-home");
             }
+
+
         } catch (Exception e) {
             Log.i(TAG, "Exception while applying shortRules " + e.getMessage());
         }
@@ -716,7 +751,7 @@ public final class Api {
 
         try {
             // prevent data leaks due to incomplete rules
-            Log.i(TAG, "Setting OUTPUT to Drop");
+            Log.i(TAG, "Setting OUTPUT to Drop for " + (ipv6 ? "v6": "v4"));
             cmds.add("-P OUTPUT DROP");
 
             for (String s : staticChains) {
@@ -729,6 +764,7 @@ public final class Api {
 
             cmds.add("#NOCHK# -D OUTPUT -j " + AFWALL_CHAIN_NAME);
             cmds.add("-I OUTPUT 1 -j " + AFWALL_CHAIN_NAME);
+
 
             if (G.enableInbound()) {
                 cmds.add("#NOCHK# -D INPUT -j " + AFWALL_CHAIN_NAME + "-input");
@@ -759,7 +795,7 @@ public final class Api {
                 cmds.add("-A afwall-input -m state --state ESTABLISHED -j RETURN");
             }
 
-            Log.i(TAG, "Callin interface routing for " + G.enableIPv6());
+            Log.i(TAG, "Callin interface routing for " + ipv6);
             addInterfaceRouting(ctx, cmds, ipv6);
 
             // send wifi, 3G, VPN packets to the appropriate dynamic chain based on interface
@@ -821,6 +857,7 @@ public final class Api {
                 addRuleForUsers(cmds, users_dns, "-A " + AFWALL_CHAIN_NAME + "-3g-tether", "-p tcp --dport=53" + action);
             }
 
+
             // if tethered, try to match the above rules (if enabled).  no match -> fall through to the
             // normal 3G/wifi rules
             cmds.add("-A " + AFWALL_CHAIN_NAME + "-wifi-tether -j " + AFWALL_CHAIN_NAME + "-wifi-fork");
@@ -830,6 +867,8 @@ public final class Api {
             // on the LAN
             if (whitelist && !G.dns_proxy().equals("disable")) {
                 cmds.add("-A " + AFWALL_CHAIN_NAME + "-wifi-lan -p udp --dport 53 -j RETURN");
+                cmds.add("-A " + AFWALL_CHAIN_NAME + "-wifi-lan -p tcp --dport 53 -j RETURN");
+
                 //bug fix allow dns to be open on Pie for all connection type
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     cmds.add("-A " + AFWALL_CHAIN_NAME + "-wifi-wan" + " -p udp --dport 53" + " -j RETURN");
@@ -837,6 +876,12 @@ public final class Api {
                     cmds.add("-A " + AFWALL_CHAIN_NAME + "-3g-roam" + " -p udp --dport 53" + " -j RETURN");
                     cmds.add("-A " + AFWALL_CHAIN_NAME + "-vpn" + " -p udp --dport 53" + " -j RETURN");
                     cmds.add("-A " + AFWALL_CHAIN_NAME + "-tether" + " -p udp --dport 53" + " -j RETURN");
+
+                    cmds.add("-A " + AFWALL_CHAIN_NAME + "-wifi-wan" + " -p tcp --dport 53" + " -j RETURN");
+                    cmds.add("-A " + AFWALL_CHAIN_NAME + "-3g-home" + " -p tcp --dport 53" + " -j RETURN");
+                    cmds.add("-A " + AFWALL_CHAIN_NAME + "-3g-roam" + " -p tcp --dport 53" + " -j RETURN");
+                    cmds.add("-A " + AFWALL_CHAIN_NAME + "-vpn" + " -p tcp --dport 53" + " -j RETURN");
+                    cmds.add("-A " + AFWALL_CHAIN_NAME + "-tether" + " -p tcp --dport 53" + " -j RETURN");
                 }
             }
 
@@ -862,6 +907,7 @@ public final class Api {
         }
 
         iptablesCommands(cmds, out, ipv6);
+
         return true;
     }
 
@@ -918,37 +964,37 @@ public final class Api {
         }
     }
 
+
     public static void applySavedIptablesRules(Context ctx, boolean showErrors, RootCommand callback) {
         Log.i(TAG, "Using applySavedIptablesRules");
         RuleDataSet dataSet = getDataSet();
-        boolean[] applied = {false, false};
+        //boolean[] applied = {false, false};
 
-        List<String> ipv4cmds = new ArrayList<String>();
-        List<String> ipv6cmds = new ArrayList<String>();
-        Thread t2 = null;
+        List<String> ipv4cmds = new ArrayList<>();
+        List<String> ipv6cmds = new ArrayList<>();
+
         Thread t1 = new Thread(() -> {
-            callback.hash = ipv6cmds.hashCode();
             applyIptablesRulesImpl(ctx, dataSet, showErrors, ipv4cmds, false);
-            applied[0] = applySavedIp4tablesRules(ctx, ipv4cmds, callback);
+            applySavedIp4tablesRules(ctx, ipv4cmds, callback);
         });
         t1.start();
 
+        Thread t2 = null;
         if (G.enableIPv6()) {
             t2 = new Thread(() -> {
                 applyIptablesRulesImpl(ctx, dataSet, showErrors, ipv6cmds, true);
-                applySavedIp6tablesRules(ctx, ipv6cmds, callback.clone().setHash(ipv6cmds.hashCode()));
+                applySavedIp6tablesRules(ctx, ipv6cmds, callback.clone().setHash(dataSet.hashCode()));
             });
             t2.start();
         }
 
         try {
             t1.join();
-            if (G.enableIPv6()&& t2 != null) {
+            if (t2 != null) {
                 t2.join();
             }
         } catch (InterruptedException e) {
         }
-        //boolean returnValue = G.enableIPv6() ? (applied[0] && applied[1]) : applied[0];
         rulesUpToDate = true;
     }
 
@@ -964,15 +1010,13 @@ public final class Api {
         final String savedPkg_lan_uid = G.pPrefs.getString(PREF_LAN_PKG_UIDS, "");
         final String savedPkg_tor_uid = G.pPrefs.getString(PREF_TOR_PKG_UIDS, "");
 
-        RuleDataSet dataSet = new RuleDataSet(getListFromPref(savedPkg_wifi_uid),
+        return new RuleDataSet(getListFromPref(savedPkg_wifi_uid),
                 getListFromPref(savedPkg_3g_uid),
                 getListFromPref(savedPkg_roam_uid),
                 getListFromPref(savedPkg_vpn_uid),
                 getListFromPref(savedPkg_tether_uid),
                 getListFromPref(savedPkg_lan_uid),
                 getListFromPref(savedPkg_tor_uid));
-
-        return dataSet;
 
     }
 
@@ -1017,22 +1061,22 @@ public final class Api {
 
     public static boolean fastApply(Context ctx, RootCommand callback) {
         try {
-            if (!rulesUpToDate) {
-                Log.i(TAG, "Using full Apply");
-                applySavedIptablesRules(ctx, true, callback);
-            } else {
-                Log.i(TAG, "Using fastApply");
-                List<String> out = new ArrayList<String>();
-                List<String> cmds;
-                cmds = new ArrayList<String>();
-                applyShortRules(ctx, cmds, false);
-                iptablesCommands(cmds, out, false);
-                if (G.enableIPv6()) {
+                if (!rulesUpToDate) {
+                    Log.i(TAG, "Using full Apply");
+                    applySavedIptablesRules(ctx, true, callback);
+                } else {
+                    Log.i(TAG, "Using fastApply");
+                    List<String> out = new ArrayList<String>();
+                    List<String> cmds;
                     cmds = new ArrayList<String>();
-                    applyShortRules(ctx, cmds, true);
-                    iptablesCommands(cmds, out, true);
-                }
-                callback.setRetryExitCode(IPTABLES_TRY_AGAIN).run(ctx, out);
+                    applyShortRules(ctx, cmds, false);
+                    iptablesCommands(cmds, out, false);
+                    if (G.enableIPv6()) {
+                        cmds = new ArrayList<String>();
+                        applyShortRules(ctx, cmds, true);
+                        iptablesCommands(cmds, out, true);
+                    }
+                    callback.setRetryExitCode(IPTABLES_TRY_AGAIN).run(ctx, out);
             }
         } catch (Exception e) {
             Log.d(TAG, "Exception while applying rules: " + e.getMessage());
@@ -1267,7 +1311,7 @@ public final class Api {
     }
 
     //Cleanup unused shell opened by logservice
-    public static void cleanupUid() {
+    /*public static void cleanupUid() {
         try {
             Set<String> uids = G.storedPid();
             if (uids != null && uids.size() > 0) {
@@ -1293,13 +1337,12 @@ public final class Api {
             tempSession.addCommand(bbPath + " pkill -9 -f \"nflog\"");
             tempSession.addCommand(bbPath + " pkill -9 -f \"aflogshellb\"");
             tempSession.addCommand(bbPath + " pkill -9 -f \"aflogshell\"");
-            //TODO: cleanup shell
         } catch (ClassCastException e) {
             Log.e(TAG, "ClassCastException in cleanupUid: " + e.getMessage());
         } catch (Exception e) {
             Log.e(TAG, "Exception in cleanupUid: " + e.getMessage());
         }
-    }
+    }*/
 
 
     public static void applyIPv6Quick(Context ctx, List<String> cmds, RootCommand callback) {
@@ -1357,21 +1400,17 @@ public final class Api {
     /**
      * Clear firewall logs by purging dmesg
      *
-     * @param ctx      application context
-     * @param callback Callback for completion status
      */
-    public static void clearLog(Context ctx, RootCommand callback) {
-        callback.run(ctx, getBusyBoxPath(ctx, true) + " dmesg -c");
-    }
+    //public static void clearLog(Context ctx, RootCommand callback) {
+    //    callback.run(ctx, getBusyBoxPath(ctx, true) + " dmesg -c");
+    //}
 
-    //purge 2 hour data or 2000 records
+    //purge 2 hour data
     public static void purgeOldLog() {
         long purgeInterval = System.currentTimeMillis() - 7200000;
         long count = new Select(com.raizlabs.android.dbflow.sql.language.Method.count()).from(LogData.class).count();
         //records are more
-        if (count > 2000) {
-            new Delete().from(LogData.class).limit(2000).async().execute();
-        } else {
+        if(count > 5000) {
             new Delete().from(LogData.class).where(LogData_Table.timestamp.lessThan(purgeInterval)).async().execute();
         }
     }
@@ -1513,11 +1552,11 @@ public final class Api {
             SparseArray<PackageInfoData> syncMap = new SparseArray<>();
             Editor edit = cachePrefs.edit();
             boolean changed = false;
-            String name = null;
-            String cachekey = null;
+            String name;
+            String cachekey;
             String cacheLabel = "cache.label.";
-            PackageInfoData app = null;
-            ApplicationInfo apinfo = null;
+            PackageInfoData app;
+            ApplicationInfo apinfo;
 
             Date install = new Date();
             install.setTime(System.currentTimeMillis() - (180000));
@@ -1735,10 +1774,10 @@ public final class Api {
                         app.appinfo = apinfo;
                         if (app.appinfo != null && (app.appinfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
                             //user app
-                            app.appType = 0;
+                            app.appType = 1;
                         } else {
                             //system app
-                            app.appType = 1;
+                            app.appType = 0;
                         }
                         app.pkgName = apinfo.packageName;
                         syncMap.put(appUid, app);
@@ -2005,21 +2044,21 @@ public final class Api {
                 ret = installBinary(ctx, R.raw.busybox_x86, "busybox") &&
                         installBinary(ctx, R.raw.iptables_x86, "iptables") &&
                         installBinary(ctx, R.raw.ip6tables_x86, "ip6tables") &&
-                        installBinary(ctx, R.raw.nflog_x86, "nflog") &&
-                        installBinary(ctx, R.raw.run_pie_x86, "run_pie");
+                        installBinary(ctx, R.raw.nflog_x86, "nflog");
+                        //installBinary(ctx, R.raw.run_pie_x86, "run_pie");
             } else if (abi.startsWith("mips")) {
                 ret = installBinary(ctx, R.raw.busybox_mips, "busybox") &&
                         installBinary(ctx, R.raw.iptables_mips, "iptables") &&
                         installBinary(ctx, R.raw.ip6tables_mips, "ip6tables") &&
-                        installBinary(ctx, R.raw.nflog_mips, "nflog") &&
-                        installBinary(ctx, R.raw.run_pie_mips, "run_pie");
+                        installBinary(ctx, R.raw.nflog_mips, "nflog");
+                        //installBinary(ctx, R.raw.run_pie_mips, "run_pie");
             } else {
                 // default to ARM
                 ret = installBinary(ctx, R.raw.busybox_arm, "busybox") &&
                         installBinary(ctx, R.raw.iptables_arm, "iptables") &&
                         installBinary(ctx, R.raw.ip6tables_arm, "ip6tables") &&
-                        installBinary(ctx, R.raw.nflog_arm, "nflog") &&
-                        installBinary(ctx, R.raw.run_pie_arm, "run_pie");
+                        installBinary(ctx, R.raw.nflog_arm, "nflog");
+                        //installBinary(ctx, R.raw.run_pie_arm, "run_pie");
             }
             Log.d(TAG, "binary installation for " + abi + (ret ? " succeeded" : " failed"));
         }
@@ -2027,8 +2066,8 @@ public final class Api {
         // arch-independent scripts
         ret &= installBinary(ctx, R.raw.afwallstart, "afwallstart");
         //Log.d(TAG, "binary installation for " + abi + (ret ? " succeeded" : " failed"));
-        ret &= installBinary(ctx, R.raw.aflogshell, "aflogshell");
-        ret &= installBinary(ctx, R.raw.aflogshellb, "aflogshellb");
+        //ret &= installBinary(ctx, R.raw.aflogshell, "aflogshell");
+        //ret &= installBinary(ctx, R.raw.aflogshellb, "aflogshellb");
 
         if (showErrors) {
             if (ret) {
@@ -2044,7 +2083,7 @@ public final class Api {
             }
         }*/
 
-        if (ret == true && currentVer > 0) {
+        if (ret && currentVer > 0) {
             // this indicates that migration from the old version was successful.
             G.appVersion(currentVer);
         }
@@ -2070,9 +2109,8 @@ public final class Api {
      */
     public static boolean isEnabled(Context ctx) {
         if (ctx == null) return false;
-        boolean flag = ctx.getSharedPreferences(PREF_FIREWALL_STATUS, Context.MODE_PRIVATE).getBoolean(PREF_ENABLED, false);
         //Log.d(TAG, "Checking for IsEnabled, Flag:" + flag);
-        return flag;
+        return ctx.getSharedPreferences(PREF_FIREWALL_STATUS, Context.MODE_PRIVATE).getBoolean(PREF_ENABLED, false);
     }
 
     /**
@@ -2198,11 +2236,11 @@ public final class Api {
         stackBuilder.addNextIntent(appIntent);*/
 
         int icon;
-        String notificationText = "";
+        String notificationText;
 
         if (status) {
             if (G.enableMultiProfile()) {
-                String profile = "";
+                String profile;
                 switch (G.storedProfile()) {
                     case "AFWallPrefs":
                         profile = G.gPrefs.getString("default", ctx.getString(R.string.defaultProfile));
@@ -2572,15 +2610,13 @@ public final class Api {
 
     public static boolean exportAll(Context ctx, final String fileName) {
         boolean res = false;
-            File file = null;
+            File file;
             if(Build.VERSION.SDK_INT  < Build.VERSION_CODES.Q ){
                 File dir = new File(Environment.getExternalStorageDirectory().getAbsolutePath() + "/afwall/");
                 dir.mkdirs();
                 file = new File(dir, fileName);
             } else{
                 file = new File(ctx.getExternalFilesDir(null)  + "/" + fileName);
-
-
             }
 
             try {
@@ -2634,6 +2670,10 @@ public final class Api {
                     //now gets all the preferences
                     exportObject.put("prefs", getAllAppPreferences(ctx, G.gPrefs));
 
+                    //store whitelist/blocklist mode
+                    String mode = G.pPrefs.getString(Api.PREF_MODE, Api.MODE_WHITELIST);
+                    exportObject.put("mode", mode);
+
                     myOutWriter.append(exportObject.toString());
                     res = true;
                     myOutWriter.close();
@@ -2643,16 +2683,14 @@ public final class Api {
                 }
 
             } catch (FileNotFoundException e) {
-                Log.d(TAG, e.getLocalizedMessage());
+                Log.d(TAG, e.getLocalizedMessage(),e);
             } catch (IOException e) {
-                Log.d(TAG, e.getLocalizedMessage());
+                Log.d(TAG, e.getLocalizedMessage(),e);
             } catch (JSONException e) {
-                Log.d(TAG, e.getLocalizedMessage());
+                Log.d(TAG, e.getLocalizedMessage(),e);
             } catch (Exception e) {
-                Log.d(TAG, e.getLocalizedMessage());
+                Log.d(TAG, e.getLocalizedMessage(),e);
             }
-
-
         return res;
     }
 
@@ -2683,7 +2721,7 @@ public final class Api {
     public static boolean exportRules(Context ctx, final String fileName) {
         boolean res = false;
 
-            File file = null;
+            File file;
             if(Build.VERSION.SDK_INT  < Build.VERSION_CODES.Q ){
                 File dir = new File(Environment.getExternalStorageDirectory().getAbsolutePath() + "/afwall/" );
                 dir.mkdirs();
@@ -2701,7 +2739,13 @@ public final class Api {
                     JSONObject obj = new JSONObject(getCurrentRulesAsMap(ctx));
                     JSONArray jArray = new JSONArray("[" + obj.toString() + "]");
 
-                    myOutWriter.append(jArray.toString());
+                    JSONObject exportObject = new JSONObject();
+                    exportObject.put("rules", jArray);
+
+                    String mode = G.pPrefs.getString(Api.PREF_MODE, Api.MODE_WHITELIST);
+                    exportObject.put("mode", mode);
+
+                    myOutWriter.append(exportObject.toString());
                     res = true;
                     myOutWriter.close();
                     fOut.close();
@@ -2720,6 +2764,49 @@ public final class Api {
         return res;
     }
 
+
+    private static boolean  importRulesRoot(Context ctx, File file, StringBuilder msg) {
+        boolean returnVal = false;
+        BufferedReader br = null;
+        try {
+            com.topjohnwu.superuser.Shell.Result result  = com.topjohnwu.superuser.Shell.su("cat " + file.getAbsolutePath()).exec();
+            List<String> out = result.getOut();
+            String data = TextUtils.join("", out);
+
+            try {
+                //old export format
+                JSONArray array = new JSONArray(data);
+                updateRulesFromJson(ctx, (JSONObject) array.get(0), PREFS_NAME);
+            } catch (JSONException e) {
+                //new exported format
+                JSONObject jsonObject = new JSONObject(data);
+
+                //save mode
+                if(jsonObject.get("mode") != null) {
+                    G.pPrefs.edit().putString(PREF_MODE, jsonObject.getString("mode")).commit();
+                }
+
+                JSONArray array = (JSONArray) jsonObject.get("rules");
+                updateRulesFromJson(ctx, (JSONObject) array.get(0), PREFS_NAME);
+
+
+            }
+            returnVal = true;
+        } catch (JSONException e) {
+            Log.e(TAG, e.getLocalizedMessage());
+        } catch (Exception e) {
+            Log.e(TAG, e.getLocalizedMessage());
+        } finally {
+            if (br != null) {
+                try {
+                    br.close();
+                } catch (IOException e) {
+                    Log.e(TAG, e.getLocalizedMessage());
+                }
+            }
+        }
+        return returnVal;
+    }
     private static boolean importRules(Context ctx, File file, StringBuilder msg) {
         boolean returnVal = false;
         BufferedReader br = null;
@@ -2731,11 +2818,32 @@ public final class Api {
                 text.append(line);
             }
             String data = text.toString();
-            JSONArray array = new JSONArray(data);
-            updateRulesFromJson(ctx, (JSONObject) array.get(0), PREFS_NAME);
+
+            try {
+                //old export format
+                JSONArray array = new JSONArray(data);
+                updateRulesFromJson(ctx, (JSONObject) array.get(0), PREFS_NAME);
+            } catch (JSONException e) {
+                //new exported format
+                JSONObject jsonObject = new JSONObject(data);
+
+                //save mode
+                if(jsonObject.get("mode") != null) {
+                    G.pPrefs.edit().putString(PREF_MODE, jsonObject.getString("mode")).commit();
+                }
+
+                JSONArray array = (JSONArray) jsonObject.get("rules");
+                updateRulesFromJson(ctx, (JSONObject) array.get(0), PREFS_NAME);
+
+
+            }
             returnVal = true;
         } catch (FileNotFoundException e) {
-            msg.append(ctx.getString(R.string.import_rules_missing));
+            if(e.getMessage().contains("EACCES")) {
+                return importRulesRoot(ctx, file, msg);
+            } else {
+                msg.append(ctx.getString(R.string.import_rules_missing));
+            }
         } catch (IOException e) {
             Log.e(TAG, e.getLocalizedMessage());
         } catch (JSONException e) {
@@ -2909,6 +3017,12 @@ public final class Api {
             String[] intType = {"logPingTime", "customDelay", "patternMax", "widgetX", "widgetY", "notification_priority"};
             List<String> ignoreList = Arrays.asList(ignore);
             List<String> intList = Arrays.asList(intType);
+
+            //allow/deny rule
+            if(object.has("mode")) {
+                G.pPrefs.edit().putString(PREF_MODE, object.getString("mode")).commit();
+            }
+
             JSONArray prefArray = (JSONArray) object.get("prefs");
             for (int i = 0; i < prefArray.length(); i++) {
                 JSONObject prefObj = (JSONObject) prefArray.get(i);
@@ -2953,7 +3067,6 @@ public final class Api {
                             updateRulesFromJson(ctx, obj, key);
                         } catch (JSONException e) {
                             if (e.getMessage().contains("No value")) {
-                                continue;
                             }
                         }
                     }
@@ -2967,7 +3080,7 @@ public final class Api {
                             updateRulesFromJson(ctx, obj, key);
                         } catch (JSONException e) {
                             if (e.getMessage().contains("No value")) {
-                                continue;
+                               // continue;
                             }
                         }
                     }
@@ -2981,7 +3094,7 @@ public final class Api {
                             updateRulesFromJson(ctx, obj, key);
                         } catch (JSONException e) {
                             if (e.getMessage().contains("No value")) {
-                                continue;
+                               // continue;
                             }
                         }
                     }
@@ -3140,8 +3253,8 @@ public final class Api {
                 File cfg = new File(location);
                 FileInputStream fis = new FileInputStream(cfg);
                 GZIPInputStream gzip = new GZIPInputStream(fis);
-                BufferedReader in = null;
-                String line = "";
+                BufferedReader in;
+                String line;
 
                 in = new BufferedReader(new InputStreamReader(gzip));
                 while ((line = in.readLine()) != null) {
@@ -3171,14 +3284,13 @@ public final class Api {
         final String savedPkg_lan_uid = G.pPrefs.getString(PREF_LAN_PKG_UIDS, "");
         final String savedPkg_tor_uid = G.pPrefs.getString(PREF_TOR_PKG_UIDS, "");
 
-        Api.RuleDataSet dataSet = new Api.RuleDataSet(getListFromPref(savedPkg_wifi_uid),
+        return new RuleDataSet(getListFromPref(savedPkg_wifi_uid),
                 getListFromPref(savedPkg_3g_uid),
                 getListFromPref(savedPkg_roam_uid),
                 getListFromPref(savedPkg_vpn_uid),
                 getListFromPref(savedPkg_tether_uid),
                 getListFromPref(savedPkg_lan_uid),
                 getListFromPref(savedPkg_tor_uid));
-        return dataSet;
     }
 
     public static boolean hasKernelFeature(String[] features,
@@ -3191,6 +3303,7 @@ public final class Api {
             for (String test : location) {
                 if (test.startsWith(features[i])) {
                     results[i] = true;
+                    break;
                 }
             }
         }
@@ -3233,7 +3346,11 @@ public final class Api {
             Resources res = context.getResources();
             Configuration conf = res.getConfiguration();
             conf.locale = defaultLocale;
-            context.getResources().updateConfiguration(conf, context.getResources().getDisplayMetrics());
+            if (Build.VERSION.SDK_INT > Build.VERSION_CODES.N) {
+                context.createConfigurationContext(conf);
+            } else {
+                context.getResources().updateConfiguration(conf, context.getResources().getDisplayMetrics());
+            }
         } else if (!"".equals(lang)) {
             Locale locale = new Locale(lang);
             if (lang.contains("_")) {
@@ -3243,7 +3360,11 @@ public final class Api {
             Resources res = context.getResources();
             Configuration conf = res.getConfiguration();
             conf.locale = locale;
-            context.getResources().updateConfiguration(conf, context.getResources().getDisplayMetrics());
+            if (Build.VERSION.SDK_INT > Build.VERSION_CODES.N) {
+                context.createConfigurationContext(conf);
+            } else {
+                context.getResources().updateConfiguration(conf, context.getResources().getDisplayMetrics());
+            }
         }
     }
 
@@ -3601,13 +3722,13 @@ public final class Api {
 
     public static void setDefaultPermission(ApplicationInfo applicationInfo) {
 
-        String savedPkg_wifi_uid = G.pPrefs.getString(PREF_WIFI_PKG_UIDS, "");
-        String savedPkg_3g_uid = G.pPrefs.getString(PREF_3G_PKG_UIDS, "");
-        String savedPkg_roam_uid = G.pPrefs.getString(PREF_ROAMING_PKG_UIDS, "");
-        String savedPkg_vpn_uid = G.pPrefs.getString(PREF_VPN_PKG_UIDS, "");
-        String savedPkg_tether_uid = G.pPrefs.getString(PREF_TETHER_PKG_UIDS, "");
-        String savedPkg_lan_uid = G.pPrefs.getString(PREF_LAN_PKG_UIDS, "");
-        String savedPkg_tor_uid = G.pPrefs.getString(PREF_TOR_PKG_UIDS, "");
+        StringBuilder savedPkg_wifi_uid = new StringBuilder(G.pPrefs.getString(PREF_WIFI_PKG_UIDS, ""));
+        StringBuilder savedPkg_3g_uid = new StringBuilder(G.pPrefs.getString(PREF_3G_PKG_UIDS, ""));
+        StringBuilder savedPkg_roam_uid = new StringBuilder(G.pPrefs.getString(PREF_ROAMING_PKG_UIDS, ""));
+        StringBuilder savedPkg_vpn_uid = new StringBuilder(G.pPrefs.getString(PREF_VPN_PKG_UIDS, ""));
+        StringBuilder savedPkg_tether_uid = new StringBuilder(G.pPrefs.getString(PREF_TETHER_PKG_UIDS, ""));
+        StringBuilder savedPkg_lan_uid =new StringBuilder( G.pPrefs.getString(PREF_LAN_PKG_UIDS, ""));
+        StringBuilder savedPkg_tor_uid = new StringBuilder(G.pPrefs.getString(PREF_TOR_PKG_UIDS, ""));
 
         //lets first get what mode
         int modeType = G.pPrefs.getString(Api.PREF_MODE, Api.MODE_WHITELIST).equals(Api.MODE_WHITELIST) ? 0 : 1;
@@ -3619,31 +3740,31 @@ public final class Api {
             if(pref.isState()) {
                 switch (pref.getUid()) {
                     case 0:
-                        savedPkg_lan_uid = savedPkg_lan_uid + "|" + applicationInfo.uid;
+                        savedPkg_lan_uid.append("|").append(applicationInfo.uid);
                         isModified = true;
                         break;
                     case 1:
-                        savedPkg_wifi_uid = savedPkg_wifi_uid + "|" + applicationInfo.uid;
+                        savedPkg_wifi_uid.append("|").append(applicationInfo.uid);
                         isModified = true;
                         break;
                     case 2:
-                        savedPkg_3g_uid = savedPkg_3g_uid + "|" + applicationInfo.uid;
+                        savedPkg_3g_uid.append("|").append(applicationInfo.uid);
                         isModified = true;
                         break;
                     case 3:
-                        savedPkg_roam_uid = savedPkg_roam_uid + "|" + applicationInfo.uid;
+                        savedPkg_roam_uid.append("|").append(applicationInfo.uid);
                         isModified = true;
                         break;
                     case 4:
-                        savedPkg_tor_uid = savedPkg_tor_uid + "|" + applicationInfo.uid;
+                        savedPkg_tor_uid.append("|").append(applicationInfo.uid);
                         isModified = true;
                         break;
                     case 5:
-                        savedPkg_vpn_uid = savedPkg_vpn_uid + "|" + applicationInfo.uid;
+                        savedPkg_vpn_uid.append("|").append(applicationInfo.uid);
                         isModified = true;
                         break;
                     case 6:
-                        savedPkg_tether_uid = savedPkg_tether_uid + "|" + applicationInfo.uid;
+                        savedPkg_tether_uid.append("|").append(applicationInfo.uid);
                         isModified = true;
                         break;
                 }
@@ -3653,13 +3774,13 @@ public final class Api {
         if(isModified) {
             SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             Editor edit = prefs.edit();
-            edit.putString(PREF_WIFI_PKG_UIDS, savedPkg_wifi_uid);
-            edit.putString(PREF_3G_PKG_UIDS, savedPkg_3g_uid);
-            edit.putString(PREF_ROAMING_PKG_UIDS, savedPkg_roam_uid);
-            edit.putString(PREF_VPN_PKG_UIDS, savedPkg_vpn_uid);
-            edit.putString(PREF_TETHER_PKG_UIDS, savedPkg_tether_uid);
-            edit.putString(PREF_LAN_PKG_UIDS, savedPkg_lan_uid);
-            edit.putString(PREF_TOR_PKG_UIDS, savedPkg_tor_uid);
+            edit.putString(PREF_WIFI_PKG_UIDS, savedPkg_wifi_uid.toString());
+            edit.putString(PREF_3G_PKG_UIDS, savedPkg_3g_uid.toString());
+            edit.putString(PREF_ROAMING_PKG_UIDS, savedPkg_roam_uid.toString());
+            edit.putString(PREF_VPN_PKG_UIDS, savedPkg_vpn_uid.toString());
+            edit.putString(PREF_TETHER_PKG_UIDS, savedPkg_tether_uid.toString());
+            edit.putString(PREF_LAN_PKG_UIDS, savedPkg_lan_uid.toString());
+            edit.putString(PREF_TOR_PKG_UIDS, savedPkg_tor_uid.toString());
             edit.commit();
             //make sure rules are modified flag is set
             Api.setRulesUpToDate(false);
@@ -3690,16 +3811,24 @@ public final class Api {
         }
 
         @Override
+        public int hashCode() {
+            final int prime = 31;
+            int result = 1;
+            result = prime * result
+                    + ((wifiList == null) ? 0 : dataList.hashCode());
+            return result;
+        }
+
+        @Override
         public String toString() {
-            StringBuilder builder = new StringBuilder();
-            builder.append(wifiList != null ? android.text.TextUtils.join(",", wifiList) : "");
-            builder.append(dataList != null ? android.text.TextUtils.join(",", dataList) : "");
-            builder.append(lanList != null ? android.text.TextUtils.join(",", lanList) : "");
-            builder.append(roamList != null ? android.text.TextUtils.join(",", roamList) : "");
-            builder.append(vpnList != null ? android.text.TextUtils.join(",", vpnList) : "");
-            builder.append(tetherList != null ? android.text.TextUtils.join(",", tetherList) : "");
-            builder.append(torList != null ? android.text.TextUtils.join(",", torList) : "");
-            return builder.toString().trim();
+            String builder = (wifiList != null ? android.text.TextUtils.join(",", wifiList) : "") +
+                    (dataList != null ? android.text.TextUtils.join(",", dataList) : "") +
+                    (lanList != null ? android.text.TextUtils.join(",", lanList) : "") +
+                    (roamList != null ? android.text.TextUtils.join(",", roamList) : "") +
+                    (vpnList != null ? android.text.TextUtils.join(",", vpnList) : "") +
+                    (tetherList != null ? android.text.TextUtils.join(",", tetherList) : "") +
+                    (torList != null ? android.text.TextUtils.join(",", torList) : "");
+            return builder.trim();
         }
     }
 
@@ -3736,7 +3865,7 @@ public final class Api {
                 }
             } catch (Exception ex) {
                 if (res != null)
-                    res.append("\n" + ex);
+                    res.append("\n").append(ex);
             }
             return exitCode;
         }
@@ -3892,6 +4021,55 @@ public final class Api {
             return tostr;
         }
 
+    }
+
+
+
+    public static void copySharedPreferences(SharedPreferences fromPreferences, SharedPreferences toPreferences, boolean clear) {
+
+        SharedPreferences.Editor editor = toPreferences.edit();
+        copySharedPreferences(fromPreferences, editor);
+        editor.commit();
+    }
+
+
+    public static void copySharedPreferences(SharedPreferences fromPreferences, SharedPreferences.Editor toEditor) {
+
+        for (Map.Entry<String, ?> entry : fromPreferences.getAll().entrySet()) {
+            Object value = entry.getValue();
+            String key = entry.getKey();
+            if (value instanceof String) {
+                toEditor.putString(key, ((String) value));
+            } else if (value instanceof Set) {
+                toEditor.putStringSet(key, (Set<String>) value); // EditorImpl.putStringSet already creates a copy of the set
+            } else if (value instanceof Integer) {
+                toEditor.putInt(key, (Integer) value);
+            } else if (value instanceof Long) {
+                toEditor.putLong(key, (Long) value);
+            } else if (value instanceof Float) {
+                toEditor.putFloat(key, (Float) value);
+            } else if (value instanceof Boolean) {
+                toEditor.putBoolean(key, (Boolean) value);
+            }
+        }
+        toEditor.commit();
+    }
+
+    @NonNull
+    public static Bitmap getBitmapFromDrawable(@NonNull Drawable drawable) {
+        final Bitmap bmp = Bitmap.createBitmap(drawable.getIntrinsicWidth(), drawable.getIntrinsicHeight(), Bitmap.Config.ARGB_8888);
+        final Canvas canvas = new Canvas(bmp);
+        drawable.setBounds(0, 0, canvas.getWidth(), canvas.getHeight());
+        drawable.draw(canvas);
+        return bmp;
+    }
+
+
+
+    @TargetApi(Build.VERSION_CODES.M)
+    public static boolean batteryOptimized(Context context) {
+        PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        return !pm.isIgnoringBatteryOptimizations(context.getPackageName());
     }
 
     /*public static class LogProbeCallback extends RootCommand.Callback {

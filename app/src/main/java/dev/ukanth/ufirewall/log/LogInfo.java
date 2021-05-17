@@ -24,19 +24,27 @@
 package dev.ukanth.ufirewall.log;
 
 import android.content.Context;
+import android.net.ConnectivityManager;
 import android.util.Log;
 import android.util.SparseArray;
 
+import org.ocpsoft.prettytime.PrettyTime;
+import org.ocpsoft.prettytime.TimeUnit;
+import org.ocpsoft.prettytime.units.JustNow;
 import org.xbill.DNS.Address;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 
 import dev.ukanth.ufirewall.Api;
 import dev.ukanth.ufirewall.Api.PackageInfoData;
+import dev.ukanth.ufirewall.InterfaceDetails;
+import dev.ukanth.ufirewall.InterfaceTracker;
 import dev.ukanth.ufirewall.R;
 import dev.ukanth.ufirewall.util.G;
 
@@ -54,8 +62,24 @@ public class LogInfo {
     public int dpt;
     public String host = "";
     public int type;
-    public String timestamp;
+    public long timestamp;
     int totalBlocked;
+
+    private static PrettyTime prettyTime;
+
+    public static String pretty(Date date) {
+        if (prettyTime == null) {
+            prettyTime = new PrettyTime(new Locale(G.locale()));
+            for (TimeUnit t : prettyTime.getUnits()) {
+                if (t instanceof JustNow) {
+                    prettyTime.removeUnit(t);
+                    break;
+                }
+            }
+        }
+        prettyTime.setReference(date);
+        return prettyTime.format(new Date(0));
+    }
 
     private final HashMap<String, Integer> dstBlocked; // Number of packets blocked per destination IP address
 
@@ -120,7 +144,7 @@ public class LogInfo {
                 totalBlocked = loginfo.totalBlocked;
                 if (loginfo.dstBlocked.size() > 0) {
                     for (String unique : loginfo.dstBlocked.keySet()) {
-                        address.append(unique + "(" + loginfo.dstBlocked.get(unique) + ")");
+                        address.append(unique).append("(").append(loginfo.dstBlocked.get(unique)).append(")");
                         address.append("\n");
                     }
                 }
@@ -151,14 +175,13 @@ public class LogInfo {
     public static LogInfo parseLogs(String result, final Context ctx, String pattern, int type) {
         StringBuilder address;
         int start, end;
-        Integer uid = -11;
+        Integer uid = -100;
         Integer strUid;
         String out, src, dst, proto, spt, dpt, len;
         LogInfo logInfo = new LogInfo();
 
         HashMap<Integer, String> appNameMap = new HashMap<Integer, String>();
         final List<PackageInfoData> apps = Api.getApps(ctx, null);
-
 
         int pos = 0;
         try {
@@ -214,7 +237,11 @@ public class LogInfo {
                 if (((start = result.indexOf("OUT=")) != -1)
                         && ((end = result.indexOf(" ", start)) != -1)) {
                     out = result.substring(start + 4, end);
-                    logInfo.out = out;
+                    if(out.isEmpty()) {
+                        logInfo.out = (InterfaceTracker.getCurrentCfg(ctx,false).netType == ConnectivityManager.TYPE_WIFI ? "eth" : "mobile");
+                    } else {
+                        logInfo.out = out;
+                    }
                 }
 
                 if (uid == android.os.Process.myUid()) {
@@ -222,10 +249,11 @@ public class LogInfo {
                 }
                 String appName = "";
                 if(logInfo.proto != null && logInfo.proto.toLowerCase().startsWith("icmp")) {
-                    appName = "ICMP";
-                    logInfo.uid = 0;
-                } else if(uid == -11) {
-                    appName = ctx.getString(R.string.kernel_item);
+                    //appName = "ICMP";
+                    return null;
+                   //logInfo.uid = 0;
+                } else if(uid == -100) {
+                    appName = ctx.getString(R.string.unknown_item);
                     logInfo.uid = uid;
                 } else {
                     if (uid < 2000) {
@@ -260,8 +288,9 @@ public class LogInfo {
                 address = new StringBuilder();
                 //address.append(ctx.getString(R.string.blocked));
                 //address.append(" ");
+
                 address.append(appName);
-                address.append("(" + uid + ") ");
+                address.append("(").append(uid).append(") ");
                 address.append(logInfo.dst);
                 address.append(":");
                 address.append(logInfo.dpt);
@@ -271,12 +300,13 @@ public class LogInfo {
                         String add  = InetAddress.getByName(logInfo.dst).getHostName();
                         if (add != null) {
                             logInfo.host = add;
-                            address.append("(" + add + ") ");
+                            address.append("(").append(add).append(") ");
                         }
                     } catch (Exception e) {
                     }
                 }
                 address.append("\n");
+                logInfo.timestamp = System.currentTimeMillis();
                 logInfo.uidString = address.toString();
                 return logInfo;
             }

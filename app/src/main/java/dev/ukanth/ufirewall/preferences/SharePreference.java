@@ -44,7 +44,7 @@ public class SharePreference implements SharedPreferences {
         mContext = context;
         mHandler = new Handler(context.getMainLooper());
         mBaseUri = Uri.parse("content://" + authority).buildUpon().appendPath(prefName).build();
-        mListeners = new WeakHashMap<OnSharedPreferenceChangeListener, PreferenceContentObserver>();
+        mListeners = new WeakHashMap<>();
     }
 
     @Override
@@ -254,7 +254,7 @@ public class SharePreference implements SharedPreferences {
                 Uri uri = mBaseUri.buildUpon().appendPath(key).build();
                 mContext.getContentResolver().delete(uri, null, null);
             }
-            ContentValues[] values = mToAdd.toArray(new ContentValues[mToAdd.size()]);
+            ContentValues[] values = mToAdd.toArray(new ContentValues[0]);
             Uri uri = mBaseUri.buildUpon().appendPath("").build();
             mContext.getContentResolver().bulkInsert(uri, values);
             return true;
